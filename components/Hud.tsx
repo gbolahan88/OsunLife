@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { LogOut, Moon, Plus, Sun, UserRound, Volume2, VolumeX } from "lucide-react";
+import { LogOut, Moon, Sun, UserRound, Volume2, VolumeX } from "lucide-react";
 import { formatNaira } from "@/lib/format";
 import { signOut } from "@/app/auth-actions";
 
@@ -12,7 +12,6 @@ type HudProps = {
   cash: number;
   isNight: boolean;
   username: string;
-  onAddCash: () => void;
 };
 
 export default function Hud({
@@ -22,7 +21,6 @@ export default function Hud({
   cash,
   isNight,
   username,
-  onAddCash,
 }: HudProps) {
   const [muted, setMuted] = useState(false);
 
@@ -52,15 +50,8 @@ export default function Hud({
           {muted ? <VolumeX size={18} /> : <Volume2 size={18} />}
         </button>
 
-        <div className="flex min-w-0 items-center gap-1 rounded-full bg-[#f2f6f1] py-1 pl-2.5 pr-1 sm:gap-2 sm:pl-3">
+        <div className="flex min-w-0 items-center rounded-full bg-[#f2f6f1] px-2.5 py-1 sm:px-3">
           <span className="truncate text-[11px] font-extrabold tabular-nums sm:text-sm">{formatNaira(cash)}</span>
-          <button
-            onClick={onAddCash}
-            aria-label="Add money"
-            className="pointer-events-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#20b978] text-white shadow-sm transition-colors hover:bg-[#159e65]"
-          >
-            <Plus size={18} />
-          </button>
         </div>
       </div>
 

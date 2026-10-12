@@ -1,9 +1,7 @@
-
 "use client";
 
-import { Html, MapControls } from "@react-three/drei";
+import { Html, OrbitControls } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { House as HouseIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { Group, InstancedMesh } from "three";
@@ -21,7 +19,7 @@ type Building = {
   roof: string;
   wall: string;
   icon: string;
-  kind?: "market" | "tower" | "stadium";
+  kind?: "market" | "tower" | "stadium" | "lounge" | "flyover";
 };
 type BillboardData = {
   x: number;
@@ -45,6 +43,39 @@ const WORLD_HEIGHT = 1600;
 const GROVE_CENTER = { x: 672, y: 1040 };
 const MIN_BUILDING_GAP = 90;
 const LABEL_FLIP_X = WORLD_WIDTH * 0.7;
+
+/* -------------------- Road tilt + Okefia flyover constants -------------------- */
+
+const UPPER_ROAD_TILT = -0.035;
+const LOWER_ROAD_TILT = 0.04;
+const VERTICAL_ROAD_X = 822; // world x of the north-south road
+const ROAD_SURFACE = 4;
+
+// The flyover carries the north-south road over the lower east-west road.
+const FLYOVER_X = VERTICAL_ROAD_X;
+const FLYOVER_Z = 570 - (VERTICAL_ROAD_X / Math.cos(LOWER_ROAD_TILT)) * Math.sin(LOWER_ROAD_TILT);
+const FLYOVER_WIDTH = 38;
+const FLYOVER_FLAT_HALF = 70; // half length of the level bridge deck
+const FLYOVER_RAMP = 120; // horizontal length of each approach ramp
+const FLYOVER_TOP = 42; // height of the deck surface
+const FLYOVER_RISE = FLYOVER_TOP - ROAD_SURFACE;
+
+// Height of the driving surface on the north-south road at world z.
+function flyoverHeight(z: number) {
+  const distance = Math.abs(z - FLYOVER_Z);
+  if (distance <= FLYOVER_FLAT_HALF) return FLYOVER_TOP;
+  if (distance >= FLYOVER_FLAT_HALF + FLYOVER_RAMP) return ROAD_SURFACE;
+  const amount = (distance - FLYOVER_FLAT_HALF) / FLYOVER_RAMP;
+  return FLYOVER_TOP - FLYOVER_RISE * amount;
+}
+
+// Slope (dHeight / dz) of the driving surface at world z.
+function flyoverSlope(z: number) {
+  const offset = z - FLYOVER_Z;
+  const distance = Math.abs(offset);
+  if (distance <= FLYOVER_FLAT_HALF || distance >= FLYOVER_FLAT_HALF + FLYOVER_RAMP) return 0;
+  return -Math.sign(offset) * (FLYOVER_RISE / FLYOVER_RAMP);
+}
 
 const RIVER_ROUTE: Point[] = [
   { x: 540, y: -100 }, { x: 620, y: 200 }, { x: 540, y: 470 },
@@ -76,6 +107,14 @@ function clearsRiver(x: number, y: number, width: number, depth: number, margin 
 function worldPosition(x: number, y: number, height = 0): [number, number, number] {
   return [x - WORLD_WIDTH / 2, height, y - WORLD_HEIGHT / 2];
 }
+
+const RIVER_BRIDGES = [
+  { y: 430, rotation: UPPER_ROAD_TILT },
+  { y: 1370, rotation: LOWER_ROAD_TILT },
+].map(({ y, rotation }) => ({
+  position: worldPosition(riverCenterAt(y), y),
+  rotation,
+}));
 
 const HORIZONTAL_ROADS = [
   { start: 375, end: 485 },
@@ -119,7 +158,7 @@ const HOME_PLOTS: Home[] = Array.from({ length: 144 }, (_, index) => ({
 const BUILDINGS: Building[] = [
   { id: "uniosun", name: "UNIOSUN Osogbo Campus", x: 220, y: 150, width: 120, depth: 92, height: 52, roof: "#a64b42", wall: "#d6c79e", icon: "🎓" },
   { id: "stadium", name: "Osogbo City Stadium", x: 960, y: 50, width: 280, depth: 280, height: 28, roof: "#47704c", wall: "#d4c69b", icon: "🏟️", kind: "stadium" },
-  { id: "home", name: "GB's House", x: 1560, y: 140, width: 145, depth: 88, height: 58, roof: "#934c38", wall: "#d9bd91", icon: "🏠" },
+  { id: "home", name: "Home", x: 1560, y: 140, width: 145, depth: 88, height: 58, roof: "#934c38", wall: "#d9bd91", icon: "🏠" },
   { id: "hospital", name: "City Hospital", x: 2150, y: 140, width: 140, depth: 110, height: 66, roof: "#7b4038", wall: "#e0d6b8", icon: "🏥" },
   { id: "palace", name: "Ataoja Palace", x: 200, y: 700, width: 120, depth: 82, height: 55, roof: "#80623c", wall: "#dfcba4", icon: "🏛️" },
   { id: "market", name: "Oja Oba Market", x: 860, y: 680, width: 300, depth: 165, height: 76, roof: "#875a34", wall: "#d5b477", icon: "🧺", kind: "market" },
@@ -133,6 +172,14 @@ const BUILDINGS: Building[] = [
   { id: "restaurant", name: "Alahja Alamala's Kitchen", x: 1350, y: 1070, width: 145, depth: 100, height: 56, roof: "#7b4631", wall: "#d8b982", icon: "🍲" },
   { id: "mall", name: "Osun Mall", x: 1760, y: 1060, width: 190, depth: 125, height: 76, roof: "#5d5a61", wall: "#cbc6b5", icon: "🏬" },
   { id: "garage", name: "Mechanic Garage", x: 2150, y: 1160, width: 150, depth: 100, height: 48, roof: "#62584c", wall: "#bda980", icon: "🛠️" },
+
+  // Nightlife (for lounges, `roof` is the neon accent colour and `wall` is the body colour)
+  { id: "berrymist", name: "BerryMist Lounge", x: 665, y: 518, width: 115, depth: 85, height: 46, roof: "#d6336c", wall: "#3b2f48", icon: "🍹", kind: "lounge" },
+  { id: "circle-lounge", name: "Circle Lounge", x: 1460, y: 625, width: 130, depth: 90, height: 48, roof: "#2fc4b2", wall: "#2f3d4a", icon: "🍸", kind: "lounge" },
+  { id: "zeaus-club", name: "Zeaus Club", x: 1810, y: 600, width: 140, depth: 95, height: 56, roof: "#8b5cf6", wall: "#2b2740", icon: "🪩", kind: "lounge" },
+
+  // Landmark marker for the flyover (the bridge itself is drawn by <Flyover />)
+  { id: "okefia", name: "Okefia Flyover", x: 2003, y: 1307, width: 38, depth: 60, height: 42, roof: "#6b6b6b", wall: "#9d9582", icon: "🌉", kind: "flyover" },
 ];
 
 const BILLBOARDS: BillboardData[] = [
@@ -682,6 +729,244 @@ function Stadium({ building }: { building: Building }) {
   );
 }
 
+/* -------------------- Nightlife venues (lounges and clubs) -------------------- */
+
+function Lounge({ building }: { building: Building }) {
+  const { width, depth, height } = building;
+  const accent = building.roof;
+  const [x, , z] = worldPosition(building.x + width / 2, building.y + depth / 2);
+
+  return (
+    <group position={[x, 0, z]}>
+      {/* Paved forecourt */}
+      <mesh position={[0, 3, 0]} receiveShadow>
+        <boxGeometry args={[width + 22, 6, depth + 22]} /><meshStandardMaterial color="#6a645d" roughness={0.95} />
+      </mesh>
+
+      {/* Main body */}
+      <mesh position={[0, height / 2 + 6, 0]} castShadow receiveShadow>
+        <boxGeometry args={[width, height, depth]} /><meshStandardMaterial color={building.wall} roughness={0.7} />
+      </mesh>
+
+      {/* Roof slab and parapet */}
+      <mesh position={[0, height + 8, 0]} castShadow>
+        <boxGeometry args={[width + 6, 4, depth + 6]} /><meshStandardMaterial color="#25212c" roughness={0.8} />
+      </mesh>
+
+      {/* Neon trim: front, right side and left side */}
+      <mesh position={[0, height + 1.5, depth / 2 + 0.9]}>
+        <boxGeometry args={[width * 0.98, 2.4, 1.2]} />
+        <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={1.2} />
+      </mesh>
+      <mesh position={[width / 2 + 0.9, height + 1.5, 0]}>
+        <boxGeometry args={[1.2, 2.4, depth * 0.98]} />
+        <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={1.2} />
+      </mesh>
+      <mesh position={[-width / 2 - 0.9, height + 1.5, 0]}>
+        <boxGeometry args={[1.2, 2.4, depth * 0.98]} />
+        <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={1.2} />
+      </mesh>
+
+      {/* Glowing front windows */}
+      {[-0.32, 0.32].map((offset) => (
+        <mesh key={offset} position={[width * offset, height * 0.62 + 6, depth / 2 + 0.6]}>
+          <boxGeometry args={[width * 0.2, height * 0.26, 1.2]} />
+          <meshStandardMaterial color="#f7d8ea" emissive={accent} emissiveIntensity={0.55} roughness={0.35} />
+        </mesh>
+      ))}
+      {/* Side window */}
+      <mesh position={[width / 2 + 0.6, height * 0.62 + 6, 0]}>
+        <boxGeometry args={[1.2, height * 0.26, depth * 0.3]} />
+        <meshStandardMaterial color="#f7d8ea" emissive={accent} emissiveIntensity={0.55} roughness={0.35} />
+      </mesh>
+
+      {/* Entrance door, awning and posts */}
+      <mesh position={[0, height * 0.25 + 6, depth / 2 + 0.9]} castShadow>
+        <boxGeometry args={[width * 0.16, height * 0.46, 1.8]} /><meshStandardMaterial color="#1a171f" roughness={0.6} />
+      </mesh>
+      <mesh position={[0, height * 0.5 + 6, depth / 2 + 6]} rotation={[0.22, 0, 0]} castShadow>
+        <boxGeometry args={[width * 0.34, 2.2, 14]} /><meshStandardMaterial color={accent} roughness={0.55} />
+      </mesh>
+      {[-1, 1].map((side) => (
+        <mesh key={side} position={[side * width * 0.16, height * 0.25 + 6, depth / 2 + 11]} castShadow>
+          <cylinderGeometry args={[0.8, 0.8, height * 0.5, 8]} /><meshStandardMaterial color="#c9b788" metalness={0.6} roughness={0.35} />
+        </mesh>
+      ))}
+
+      {/* Rooftop sign */}
+      <Html position={[0, height + 20, depth / 2 - 4]} center zIndexRange={[100, 0]}>
+        <div
+          className="pointer-events-none whitespace-nowrap rounded-sm border border-white/70 px-1.5 py-0.5 text-center text-[7px] font-black tracking-widest text-white shadow"
+          style={{ background: accent, boxShadow: `0 0 8px ${accent}` }}
+        >
+          {building.name.toUpperCase()}
+        </div>
+      </Html>
+      {building.id === "zeaus-club" && <ClubSkyLights height={height + 12} />}
+    </group>
+  );
+}
+
+function ClubSkyLights({ height }: { height: number }) {
+  const beams = useRef<Group>(null);
+
+  useFrame(({ clock }) => {
+    beams.current?.children.forEach((beam, index) => {
+      beam.rotation.x = Math.sin(clock.elapsedTime * 0.8 + index) * 0.16;
+      beam.rotation.z = Math.cos(clock.elapsedTime * 0.65 + index) * 0.12;
+    });
+  });
+
+  return (
+    <group ref={beams} position={[0, height, 0]}>
+      {["#8b5cf6", "#35d9ff", "#f04f9b"].map((color, index) => (
+        <group key={color} position={[(index - 1) * 15, 0, (index - 1) * 11]}>
+          <mesh position={[0, 165, 0]}>
+            <coneGeometry args={[18, 330, 20, 1, true]} />
+            <meshBasicMaterial color={color} transparent opacity={0.2} depthWrite={false} blending={THREE.AdditiveBlending} />
+          </mesh>
+          <mesh position={[0, 165, 0]}>
+            <coneGeometry args={[8, 330, 16, 1, true]} />
+            <meshBasicMaterial color={color} transparent opacity={0.18} depthWrite={false} blending={THREE.AdditiveBlending} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+/* -------------------- Okefia flyover -------------------- */
+
+function Flyover() {
+  const rampGeometry = useMemo(() => {
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    shape.lineTo(FLYOVER_RAMP, 0);
+    shape.lineTo(0, FLYOVER_RISE);
+    shape.closePath();
+    return new THREE.ExtrudeGeometry(shape, { depth: FLYOVER_WIDTH, bevelEnabled: false });
+  }, []);
+
+  const parapetGeometry = useMemo(() => {
+    const shape = new THREE.Shape();
+    shape.moveTo(0, FLYOVER_RISE);
+    shape.lineTo(FLYOVER_RAMP, 0);
+    shape.lineTo(FLYOVER_RAMP, 4);
+    shape.lineTo(0, FLYOVER_RISE + 4);
+    shape.closePath();
+    return new THREE.ExtrudeGeometry(shape, { depth: 2, bevelEnabled: false });
+  }, []);
+
+  useEffect(() => () => {
+    rampGeometry.dispose();
+    parapetGeometry.dispose();
+  }, [parapetGeometry, rampGeometry]);
+
+  const angle = Math.atan2(FLYOVER_RISE, FLYOVER_RAMP);
+  const rampLength = Math.hypot(FLYOVER_RAMP, FLYOVER_RISE);
+  const deckLength = FLYOVER_FLAT_HALF * 2;
+  const slabBottom = FLYOVER_TOP - 7;
+  const pierHeight = slabBottom - 2;
+
+  const ramps: { key: string; position: [number, number, number]; rotation: number }[] = [
+    { key: "south", position: [FLYOVER_X + FLYOVER_WIDTH / 2, ROAD_SURFACE, FLYOVER_Z + FLYOVER_FLAT_HALF], rotation: -Math.PI / 2 },
+    { key: "north", position: [FLYOVER_X - FLYOVER_WIDTH / 2, ROAD_SURFACE, FLYOVER_Z - FLYOVER_FLAT_HALF], rotation: Math.PI / 2 },
+  ];
+
+  return (
+    <group>
+      {/* Approach ramps */}
+      {ramps.map((ramp) => (
+        <group key={ramp.key} position={ramp.position} rotation={[0, ramp.rotation, 0]}>
+          <mesh geometry={rampGeometry} castShadow receiveShadow>
+            <meshStandardMaterial color="#45494a" roughness={0.94} />
+          </mesh>
+          {[0, FLYOVER_WIDTH - 2].map((offset) => (
+            <mesh key={offset} geometry={parapetGeometry} position={[0, 0, offset]} castShadow>
+              <meshStandardMaterial color="#cfc6ac" roughness={0.9} />
+            </mesh>
+          ))}
+          <mesh position={[FLYOVER_RAMP / 2, FLYOVER_RISE / 2 + 0.3, FLYOVER_WIDTH / 2]} rotation={[0, 0, -angle]}>
+            <boxGeometry args={[rampLength, 0.3, 1.1]} /><meshStandardMaterial color="#e0b94f" roughness={0.72} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* Bridge deck over the lower road */}
+      <group position={[FLYOVER_X, 0, FLYOVER_Z]}>
+        <mesh position={[0, FLYOVER_TOP - 3.7, 0]} castShadow receiveShadow>
+          <boxGeometry args={[FLYOVER_WIDTH, 6.6, deckLength]} /><meshStandardMaterial color="#9d9582" roughness={0.9} />
+        </mesh>
+        <mesh position={[0, FLYOVER_TOP - 0.4, 0]} receiveShadow>
+          <boxGeometry args={[FLYOVER_WIDTH - 4, 0.8, deckLength]} /><meshStandardMaterial color="#45494a" roughness={0.94} />
+        </mesh>
+        <mesh position={[0, FLYOVER_TOP + 0.1, 0]}>
+          <boxGeometry args={[1.1, 0.3, deckLength]} /><meshStandardMaterial color="#e0b94f" roughness={0.72} />
+        </mesh>
+        {[-1, 1].map((side) => (
+          <mesh key={side} position={[side * (FLYOVER_WIDTH / 2 - 1), FLYOVER_TOP + 2, 0]} castShadow>
+            <boxGeometry args={[2, 4, deckLength]} /><meshStandardMaterial color="#cfc6ac" roughness={0.9} />
+          </mesh>
+        ))}
+
+        {/* Piers stand just outside the lower road so traffic passes underneath */}
+        {[-1, 1].map((end) => (
+          <group key={end} position={[0, 0, end * (FLYOVER_FLAT_HALF - 8)]}>
+            <mesh position={[0, slabBottom - 1.5, 0]} castShadow>
+              <boxGeometry args={[FLYOVER_WIDTH + 4, 3, 10]} /><meshStandardMaterial color="#8c8472" roughness={0.9} />
+            </mesh>
+            {[-1, 1].map((side) => (
+              <mesh key={side} position={[side * 11, 2 + pierHeight / 2, 0]} castShadow>
+                <boxGeometry args={[7, pierHeight, 7]} /><meshStandardMaterial color="#aaa18b" roughness={0.92} />
+              </mesh>
+            ))}
+          </group>
+        ))}
+      </group>
+    </group>
+  );
+}
+
+function RiverBridge({ position, rotation }: {
+  position: [number, number, number];
+  rotation: number;
+}) {
+  return (
+    <group position={position} rotation={[0, rotation, 0]}>
+      <mesh position={[0, 3, 0]} castShadow receiveShadow>
+        <boxGeometry args={[116, 2, 86]} />
+        <meshStandardMaterial color="#8c887d" roughness={0.9} />
+      </mesh>
+      <mesh position={[0, 4.08, 0]} receiveShadow>
+        <boxGeometry args={[112, 0.2, 80]} />
+        <meshStandardMaterial color="#414748" roughness={0.92} />
+      </mesh>
+      {[-1, 1].map((side) => (
+        <group key={side} position={[0, 0, side * 39]}>
+          <mesh position={[0, 7, 0]} castShadow>
+            <boxGeometry args={[112, 6, 2.5]} />
+            <meshStandardMaterial color="#d0c7b1" roughness={0.86} />
+          </mesh>
+          <mesh position={[0, 10.2, 0]}>
+            <boxGeometry args={[112, 0.9, 3]} />
+            <meshStandardMaterial color="#e0b94f" roughness={0.72} />
+          </mesh>
+        </group>
+      ))}
+      {[-1, 1].map((bank) => (
+        <group key={bank} position={[bank * 46, 0, 0]}>
+          {[-1, 1].map((side) => (
+            <mesh key={side} position={[0, 2, side * 34]} castShadow>
+              <boxGeometry args={[8, 4, 8]} />
+              <meshStandardMaterial color="#aaa18b" roughness={0.92} />
+            </mesh>
+          ))}
+        </group>
+      ))}
+    </group>
+  );
+}
+
 function Billboard({ board }: { board: BillboardData }) {
   const [x, , z] = worldPosition(board.x + board.width / 2, board.y + 50);
   return (
@@ -1060,25 +1345,33 @@ function TrafficVehicle({
   const wheelGroups = useRef<Group[]>([]);
   const progress = useRef(start);
 
-  const length = kind === "van" ? 34 : kind === "bike" ? 22 : kind === "taxi" ? 29 : 28;
-
   useFrame((_, delta) => {
     const vehicle = vehicleRef.current;
     if (!vehicle) return;
 
     progress.current += delta * speed;
 
-    const horizontal = road !== "vertical";
-    const span = horizontal ? WORLD_WIDTH - 100 : WORLD_HEIGHT - 100;
-    const position = (progress.current % span) - span / 2;
-
-    if (horizontal) {
-      vehicle.position.set(position, 4, (road === "upper" ? -370 : 570) + lane);
-      // The vehicle's front faces local +Z, so rotate it to face along world X.
-      vehicle.rotation.y = Math.PI / 2;
+    if (road === "vertical") {
+      // North-south road: climbs the Okefia flyover ramps, crosses the deck,
+      // and drops back down, passing above the lower east-west road.
+      const span = WORLD_HEIGHT - 100;
+      const z = (progress.current % span) - span / 2 - 20;
+      vehicle.position.set(VERTICAL_ROAD_X + lane, flyoverHeight(z), z);
+      // The front faces local +Z, so a rising slope pitches the nose up.
+      vehicle.rotation.set(-Math.atan(flyoverSlope(z)), 0, 0);
     } else {
-      vehicle.position.set(822 + lane, 4, position);
-      vehicle.rotation.y = 0;
+      // East-west roads are slightly tilted, so follow the road's own axis.
+      const tilt = road === "upper" ? UPPER_ROAD_TILT : LOWER_ROAD_TILT;
+      const span = WORLD_WIDTH - 100;
+      const along = (progress.current % span) - span / 2;
+      const baseZ = road === "upper" ? -370 : 570;
+      vehicle.position.set(
+        along * Math.cos(tilt) + lane * Math.sin(tilt),
+        ROAD_SURFACE,
+        baseZ - along * Math.sin(tilt) + lane * Math.cos(tilt)
+      );
+      // Face along the road direction.
+      vehicle.rotation.set(0, Math.PI / 2 + tilt, 0);
     }
 
     wheelGroups.current.forEach((wheel) => {
@@ -1125,10 +1418,20 @@ function TrafficVehicle({
 function CityTraffic() {
   return (
     <group>
+      {/* Upper east-west road */}
       <TrafficVehicle kind="sedan" color="#d94e3f" speed={115} start={120} lane={-18} road="upper" />
-      <TrafficVehicle kind="taxi" color="#f0bd36" speed={92} start={850} lane={18} road="lower" />
       <TrafficVehicle kind="van" color="#e9e6dc" speed={76} start={1450} lane={-18} road="upper" />
-      <TrafficVehicle kind="bike" color="#286fba" speed={130} start={600} lane={-12} road="vertical" />
+
+      {/* Lower east-west road: these pass UNDER the Okefia flyover */}
+      <TrafficVehicle kind="taxi" color="#f0bd36" speed={92} start={850} lane={18} road="lower" />
+      <TrafficVehicle kind="sedan" color="#2f6f9f" speed={105} start={380} lane={-18} road="lower" />
+      <TrafficVehicle kind="van" color="#c9d2d6" speed={70} start={1500} lane={18} road="lower" />
+
+      {/* North-south road: these go OVER the Okefia flyover */}
+      <TrafficVehicle kind="bike" color="#286fba" speed={130} start={600} lane={-7} road="vertical" />
+      <TrafficVehicle kind="sedan" color="#3f8f5c" speed={100} start={150} lane={7} road="vertical" />
+      <TrafficVehicle kind="taxi" color="#f0bd36" speed={84} start={1100} lane={-7} road="vertical" />
+      <TrafficVehicle kind="van" color="#a64d3c" speed={68} start={900} lane={7} road="vertical" />
     </group>
   );
 }
@@ -1185,6 +1488,23 @@ function CityPeople() {
   );
 }
 
+function BuildingModel({ building }: { building: Building }) {
+  switch (building.kind) {
+    case "stadium":
+      return <Stadium building={building} />;
+    case "market":
+      return <Market building={building} />;
+    case "tower":
+      return <Tower building={building} />;
+    case "lounge":
+      return <Lounge building={building} />;
+    case "flyover":
+      return <Flyover />;
+    default:
+      return <House building={building} />;
+  }
+}
+
 function Landmark({ building, selected, onVisit }: {
   building: Building;
   selected: boolean;
@@ -1205,7 +1525,7 @@ function Landmark({ building, selected, onVisit }: {
         event.stopPropagation();
         onVisit(building);
       }}>
-        {building.kind === "stadium" ? <Stadium building={building} /> : building.kind === "market" ? <Market building={building} /> : building.kind === "tower" ? <Tower building={building} /> : <House building={building} />}
+        <BuildingModel building={building} />
       </group>
       <Html position={[x, markerHeight, z]} center zIndexRange={raised ? [16777371, 16777300] : [16777271, 0]}>
         <button
@@ -1260,7 +1580,7 @@ function Scene({ active, interactive, onVisit, onEnterBuilding }: {
   active: boolean;
   interactive: boolean;
   onVisit: (building: Building) => void;
-  onEnterBuilding: (buildingName: string) => void;
+  onEnterBuilding: (buildingName: string, buildingId: string) => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [destination, setDestination] = useState<Point>({
@@ -1289,7 +1609,7 @@ function Scene({ active, interactive, onVisit, onEnterBuilding }: {
     setDestination({ x: building.x + building.width / 2, y: building.y + building.depth + 35 });
     window.setTimeout(() => {
       onVisit(building);
-      onEnterBuilding(building.name);
+      onEnterBuilding(building.name, building.id);
     }, 0);
   }
 
@@ -1299,7 +1619,7 @@ function Scene({ active, interactive, onVisit, onEnterBuilding }: {
       <ambientLight intensity={1.35} />
       <hemisphereLight args={["#fff4dc", "#526c51", 1.7]} />
       <directionalLight position={[-850, 1900, 1100]} intensity={2.3} castShadow shadow-mapSize={[2048, 2048]} shadow-camera-left={-1500} shadow-camera-right={1500} shadow-camera-top={1200} shadow-camera-bottom={-1200} />
-      <MapControls makeDefault enabled={active && interactive} enableDamping dampingFactor={0.1} enableRotate enablePan enableZoom minPolarAngle={0.25} maxPolarAngle={1.4} minDistance={1100} maxDistance={5200} screenSpacePanning={false} touches={{ ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN }} />
+      <OrbitControls makeDefault enabled={active && interactive} enableDamping dampingFactor={0.1} enableRotate enablePan enableZoom minPolarAngle={0.18} maxPolarAngle={1.5} minDistance={180} maxDistance={5200} screenSpacePanning={false} target={[0, 0, 0]} />
 
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -48, 0]}>
         <planeGeometry args={[10000, 10000]} /><meshStandardMaterial map={oceanTexture} color="#d2e3e3" roughness={0.42} metalness={0.12} />
@@ -1315,13 +1635,14 @@ function Scene({ active, interactive, onVisit, onEnterBuilding }: {
       </mesh>
       <InstancedNeighborhood />
 
-      <Road length={2550} width={98} position={[0, 0, -370]} rotation={-0.035} crossings={[822]} asphalt={asphaltTexture} />
-      <Road length={2550} width={90} position={[0, 0, 570]} rotation={0.04} crossings={[822]} asphalt={asphaltTexture} />
+      <Road length={2550} width={98} position={[0, 0, -370]} rotation={UPPER_ROAD_TILT} crossings={[822]} asphalt={asphaltTexture} />
+      <Road length={2550} width={90} position={[0, 0, 570]} rotation={LOWER_ROAD_TILT} crossings={[822]} asphalt={asphaltTexture} />
       <Road length={1500} width={38} position={[822, 0, -20]} rotation={Math.PI / 2} crossings={[-350, 590]} asphalt={asphaltTexture} />
 
       <mesh geometry={riverGeometry} receiveShadow><meshStandardMaterial color="#347f91" roughness={0.5} side={THREE.DoubleSide} /></mesh>
       <mesh geometry={riverGeometry} position={[0, 1.4, 0]}><meshStandardMaterial color="#52b3c4" roughness={0.24} metalness={0.08} side={THREE.DoubleSide} /></mesh>
 
+      {RIVER_BRIDGES.map((bridge) => <RiverBridge key={bridge.position[2]} {...bridge} />)}
       <CityTraffic />
       <CityPeople />
       {TREES.map((tree, index) => <Tree key={index} {...tree} scale={0.9 + (index % 3) * 0.16} />)}
@@ -1402,7 +1723,7 @@ export default function OsogboScene({
 }: {
   active: boolean;
   interactive?: boolean;
-  onEnterBuilding: (buildingName: string) => void;
+  onEnterBuilding: (buildingName: string, buildingId: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedBuilding, setSelectedBuilding] = useState<string | null>(null);

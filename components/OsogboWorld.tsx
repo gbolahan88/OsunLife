@@ -9,7 +9,7 @@ export default function OsogboWorld({
 }: {
   active: boolean;
   interactive?: boolean;
-  onEnterBuilding: (buildingName: string) => void;
+  onEnterBuilding: (buildingName: string, buildingId: string) => void;
 }) {
   return <OsogboScene active={active} interactive={interactive} onEnterBuilding={onEnterBuilding} />;
 }
