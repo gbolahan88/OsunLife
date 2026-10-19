@@ -1,15 +1,27 @@
 "use client";
 
-import OsogboScene from "./OsogboScene";
+import OsogboScene from "@/components/OsogboScene";
+import {
+  CharacterAppearance,
+  DEFAULT_CHARACTER_APPEARANCE,
+} from "@/store/characterAppearance";
+
+type OsogboWorldProps = {
+  active: boolean;
+  appearance?: CharacterAppearance;
+  onEnterBuilding: (buildingName: string, buildingId: string) => void;
+};
 
 export default function OsogboWorld({
   active,
-  interactive = true,
+  appearance = DEFAULT_CHARACTER_APPEARANCE,
   onEnterBuilding,
-}: {
-  active: boolean;
-  interactive?: boolean;
-  onEnterBuilding: (buildingName: string, buildingId: string) => void;
-}) {
-  return <OsogboScene active={active} interactive={interactive} onEnterBuilding={onEnterBuilding} />;
+}: OsogboWorldProps) {
+  return (
+    <OsogboScene
+      active={active}
+      appearance={appearance}
+      onEnterBuilding={onEnterBuilding}
+    />
+  );
 }

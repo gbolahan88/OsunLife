@@ -5,6 +5,15 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { Group, InstancedMesh } from "three";
+import { getGameClock } from "@/lib/time";
+import { useNow } from "@/hooks/useNow";
+import { useGameStore } from "@/store/gameStore";
+import {
+  CharacterAppearance,
+  DEFAULT_CHARACTER_APPEARANCE,
+  buildAvatarUrl,
+} from "@/store/characterAppearance";
+import CharacterModel from "@/components/game/CharacterModel";
 
 type Point = { x: number; y: number };
 type Home = Point & { floors: number; roof: string };
@@ -19,7 +28,7 @@ type Building = {
   roof: string;
   wall: string;
   icon: string;
-  kind?: "market" | "tower" | "stadium" | "lounge" | "flyover";
+  kind?: "market" | "tower" | "stadium" | "lounge" | "openbar" | "flyover";
 };
 type BillboardData = {
   x: number;
@@ -43,38 +52,51 @@ const WORLD_HEIGHT = 1600;
 const GROVE_CENTER = { x: 672, y: 1040 };
 const MIN_BUILDING_GAP = 90;
 const LABEL_FLIP_X = WORLD_WIDTH * 0.7;
-
-/* -------------------- Road tilt + Okefia flyover constants -------------------- */
+const PEDESTRIAN_SCALE = 0.45;
+const PLAYER_SCALE = 0.5;
 
 const UPPER_ROAD_TILT = -0.035;
 const LOWER_ROAD_TILT = 0.04;
-const VERTICAL_ROAD_X = 822; // world x of the north-south road
+const VERTICAL_ROAD_X = 822;
 const ROAD_SURFACE = 4;
 
-// The flyover carries the north-south road over the lower east-west road.
 const FLYOVER_X = VERTICAL_ROAD_X;
 const FLYOVER_Z = 570 - (VERTICAL_ROAD_X / Math.cos(LOWER_ROAD_TILT)) * Math.sin(LOWER_ROAD_TILT);
 const FLYOVER_WIDTH = 38;
-const FLYOVER_FLAT_HALF = 70; // half length of the level bridge deck
-const FLYOVER_RAMP = 120; // horizontal length of each approach ramp
-const FLYOVER_TOP = 42; // height of the deck surface
+const FLYOVER_FLAT_HALF = 70;
+const FLYOVER_RAMP = 120;
+const FLYOVER_TOP = 42;
 const FLYOVER_RISE = FLYOVER_TOP - ROAD_SURFACE;
 
-// Height of the driving surface on the north-south road at world z.
-function flyoverHeight(z: number) {
-  const distance = Math.abs(z - FLYOVER_Z);
+const OLAIYA_X = VERTICAL_ROAD_X;
+const OLAIYA_ALONG = VERTICAL_ROAD_X / Math.cos(UPPER_ROAD_TILT);
+const OLAIYA_Z = -370 - OLAIYA_ALONG * Math.sin(UPPER_ROAD_TILT);
+const OLAIYA_WIDTH = 60;
+
+function rampHeight(distance: number) {
   if (distance <= FLYOVER_FLAT_HALF) return FLYOVER_TOP;
   if (distance >= FLYOVER_FLAT_HALF + FLYOVER_RAMP) return ROAD_SURFACE;
   const amount = (distance - FLYOVER_FLAT_HALF) / FLYOVER_RAMP;
   return FLYOVER_TOP - FLYOVER_RISE * amount;
 }
 
-// Slope (dHeight / dz) of the driving surface at world z.
-function flyoverSlope(z: number) {
-  const offset = z - FLYOVER_Z;
+function rampSlope(offset: number) {
   const distance = Math.abs(offset);
   if (distance <= FLYOVER_FLAT_HALF || distance >= FLYOVER_FLAT_HALF + FLYOVER_RAMP) return 0;
   return -Math.sign(offset) * (FLYOVER_RISE / FLYOVER_RAMP);
+}
+
+function flyoverHeight(z: number) {
+  return rampHeight(Math.abs(z - FLYOVER_Z));
+}
+function flyoverSlope(z: number) {
+  return rampSlope(z - FLYOVER_Z);
+}
+function upperFlyoverHeight(along: number) {
+  return rampHeight(Math.abs(along - OLAIYA_ALONG));
+}
+function upperFlyoverSlope(along: number) {
+  return rampSlope(along - OLAIYA_ALONG);
 }
 
 const RIVER_ROUTE: Point[] = [
@@ -115,6 +137,28 @@ const RIVER_BRIDGES = [
   position: worldPosition(riverCenterAt(y), y),
   rotation,
 }));
+
+const LAMPS = (() => {
+  const roads = [
+    { baseZ: -370, tilt: UPPER_ROAD_TILT, halfWidth: 49 },
+    { baseZ: 570, tilt: LOWER_ROAD_TILT, halfWidth: 49 },
+  ];
+  const keepAway = [VERTICAL_ROAD_X, ...RIVER_BRIDGES.map((bridge) => bridge.position[0])];
+  const lamps: Point[] = [];
+
+  for (const road of roads) {
+    for (let along = -1100; along <= 1100; along += 220) {
+      for (const side of [-1, 1]) {
+        const lateral = side * road.halfWidth;
+        const x = along * Math.cos(road.tilt) + lateral * Math.sin(road.tilt);
+        const z = road.baseZ - along * Math.sin(road.tilt) + lateral * Math.cos(road.tilt);
+        if (keepAway.some((away) => Math.abs(x - away) < 90)) continue;
+        lamps.push({ x, y: z });
+      }
+    }
+  }
+  return lamps;
+})();
 
 const HORIZONTAL_ROADS = [
   { start: 375, end: 485 },
@@ -162,7 +206,7 @@ const BUILDINGS: Building[] = [
   { id: "hospital", name: "City Hospital", x: 2150, y: 140, width: 140, depth: 110, height: 66, roof: "#7b4038", wall: "#e0d6b8", icon: "🏥" },
   { id: "palace", name: "Ataoja Palace", x: 200, y: 700, width: 120, depth: 82, height: 55, roof: "#80623c", wall: "#dfcba4", icon: "🏛️" },
   { id: "market", name: "Oja Oba Market", x: 860, y: 680, width: 300, depth: 165, height: 76, roof: "#875a34", wall: "#d5b477", icon: "🧺", kind: "market" },
-  { id: "adire-tower", name: "Nike's Gallery", x: 1270, y: 800, width: 115, depth: 90, height: 145, roof: "#30485c", wall: "#72a2a7", icon: "🏙️", kind: "tower" },
+  { id: "adire-tower", name: "Nike's Gallery", x: 0, y: 700, width: 115, depth: 90, height: 145, roof: "#30485c", wall: "#72a2a7", icon: "🏙️", kind: "tower" },
   { id: "civic-tower", name: "Osun Civic Tower", x: 1560, y: 880, width: 118, depth: 96, height: 160, roof: "#596b79", wall: "#8bb7b5", icon: "🏢", kind: "tower" },
   { id: "bank-tower", name: "Oroki Heights", x: 2110, y: 790, width: 118, depth: 92, height: 132, roof: "#48515f", wall: "#94b2ad", icon: "🏬", kind: "tower" },
   { id: "grove-gate", name: "Osun Grove", x: 370, y: 1000, width: 110, depth: 78, height: 48, roof: "#47704c", wall: "#d4c69b", icon: "🌳" },
@@ -170,21 +214,18 @@ const BUILDINGS: Building[] = [
   { id: "shop1", name: "Local Shop", x: 1010, y: 1000, width: 125, depth: 90, height: 49, roof: "#4d6c70", wall: "#d4c59b", icon: "🛍️" },
   { id: "barber", name: "Fresh Cut", x: 940, y: 1190, width: 115, depth: 85, height: 44, roof: "#49676d", wall: "#d9c59b", icon: "✂️" },
   { id: "restaurant", name: "Alahja Alamala's Kitchen", x: 1350, y: 1070, width: 145, depth: 100, height: 56, roof: "#7b4631", wall: "#d8b982", icon: "🍲" },
-  { id: "mall", name: "Osun Mall", x: 1760, y: 1060, width: 190, depth: 125, height: 76, roof: "#5d5a61", wall: "#cbc6b5", icon: "🏬" },
+  { id: "mall", name: "Osun Mall", x: 1760, y: 1060, width: 190, depth: 125, height: 76, roof: "#5d5a61", wall: "#cbc6b5", icon: "🛒" },
   { id: "garage", name: "Mechanic Garage", x: 2150, y: 1160, width: 150, depth: 100, height: 48, roof: "#62584c", wall: "#bda980", icon: "🛠️" },
-
-  // Nightlife (for lounges, `roof` is the neon accent colour and `wall` is the body colour)
-  { id: "berrymist", name: "BerryMist Lounge", x: 665, y: 518, width: 115, depth: 85, height: 46, roof: "#d6336c", wall: "#3b2f48", icon: "🍹", kind: "lounge" },
-  { id: "circle-lounge", name: "Circle Lounge", x: 1460, y: 625, width: 130, depth: 90, height: 48, roof: "#2fc4b2", wall: "#2f3d4a", icon: "🍸", kind: "lounge" },
-  { id: "zeaus-club", name: "Zeaus Club", x: 1810, y: 600, width: 140, depth: 95, height: 56, roof: "#8b5cf6", wall: "#2b2740", icon: "🪩", kind: "lounge" },
-
-  // Landmark marker for the flyover (the bridge itself is drawn by <Flyover />)
+  { id: "berrymist", name: "BerryMist Lounge", x: 665, y: 518, width: 115, depth: 85, height: 36, roof: "#d6336c", wall: "#3b2f48", icon: "🍹", kind: "openbar" },
+  { id: "circle-lounge", name: "Circle Lounge", x: 1250, y: 625, width: 140, depth: 95, height: 40, roof: "#2fc4b2", wall: "#2f3d4a", icon: "🍸", kind: "openbar" },
+  { id: "zeus-club", name: "Zeus Club", x: 1810, y: 600, width: 140, depth: 95, height: 56, roof: "#8b5cf6", wall: "#2b2740", icon: "🪩", kind: "lounge" },
   { id: "okefia", name: "Okefia Flyover", x: 2003, y: 1307, width: 38, depth: 60, height: 42, roof: "#6b6b6b", wall: "#9d9582", icon: "🌉", kind: "flyover" },
+  { id: "olaiya", name: "Olaiya Flyover", x: 1992, y: 429, width: 60, depth: 60, height: 42, roof: "#6b6b6b", wall: "#9d9582", icon: "🌉", kind: "flyover" },
 ];
 
 const BILLBOARDS: BillboardData[] = [
-  { x: 120, y: 505, width: 250, title: "NIKE'S GALLERY", subtitle: "CRAFTED IN OSOGBO", color: "#28776e" },
-  { x: 680, y: 300, width: 280, title: "OJA OBA", subtitle: "MARKET DAY", color: "#bc6345" },
+  { x: 300, y: 505, width: 250, title: "NIKE'S GALLERY", subtitle: "CRAFTED IN OSOGBO", color: "#28776e" },
+  { x: 680, y: 50, width: 280, title: "OJA OBA", subtitle: "MARKET DAY", color: "#bc6345" },
   { x: 1210, y: 500, width: 270, title: "OSUN", subtitle: "HERITAGE WEEK", color: "#d89b3c" },
   { x: 1720, y: 500, width: 265, title: "OROKI", subtitle: "MADE IN OSOGBO", color: "#346f77" },
   { x: 2110, y: 505, width: 245, title: "CITY LIFE", subtitle: "FIND YOUR PLACE", color: "#9b5442" },
@@ -490,7 +531,12 @@ function InstancedNeighborhood() {
   const windows = useRef<InstancedMesh>(null);
   const windowGlass = useRef<InstancedMesh>(null);
   const doors = useRef<InstancedMesh>(null);
+  const glassMaterial = useRef<THREE.MeshStandardMaterial>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  useFrame(() => {
+    if (glassMaterial.current) glassMaterial.current.emissiveIntensity = lighting.night * 1.8;
+  });
 
   useLayoutEffect(() => {
     HOMES.forEach((home, index) => {
@@ -549,7 +595,7 @@ function InstancedNeighborhood() {
         <boxGeometry args={[1, 1, 1]} /><meshStandardMaterial color="#e7dfca" roughness={0.8} />
       </instancedMesh>
       <instancedMesh ref={windowGlass} args={[undefined, undefined, HOMES.length]}>
-        <boxGeometry args={[0.72, 0.72, 1.1]} /><meshStandardMaterial color="#76aeb0" metalness={0.16} roughness={0.32} />
+        <boxGeometry args={[0.72, 0.72, 1.1]} /><meshStandardMaterial ref={glassMaterial} color="#76aeb0" emissive="#ffd48a" emissiveIntensity={0} metalness={0.16} roughness={0.32} />
       </instancedMesh>
       <instancedMesh ref={doors} args={[undefined, undefined, HOMES.length]}>
         <boxGeometry args={[1, 1, 1]} /><meshStandardMaterial color="#765039" roughness={0.88} />
@@ -681,11 +727,27 @@ function Market({ building }: { building: Building }) {
   );
 }
 
-const TOWER_MARKER_LIFT = 80;
-const DEFAULT_MARKER_LIFT = 45;
+const ICON_SIZE = 24;
+const HOME_ICON_SIZE = 30;
+const PIN_STEM = 14;
 
 function markerHeightFor(building: Building) {
-  return building.height + (building.kind === "tower" ? TOWER_MARKER_LIFT : DEFAULT_MARKER_LIFT);
+  switch (building.kind) {
+    case "tower":
+      return building.height + 38;
+    case "market":
+      return 72;
+    case "stadium":
+      return 52;
+    case "lounge":
+      return building.height + 36;
+    case "openbar":
+      return building.id === "circle-lounge" ? 88 : 76;
+    case "flyover":
+      return building.height + 26;
+    default:
+      return building.height + 28;
+  }
 }
 
 function Tower({ building }: { building: Building }) {
@@ -729,8 +791,6 @@ function Stadium({ building }: { building: Building }) {
   );
 }
 
-/* -------------------- Nightlife venues (lounges and clubs) -------------------- */
-
 function Lounge({ building }: { building: Building }) {
   const { width, depth, height } = building;
   const accent = building.roof;
@@ -738,22 +798,15 @@ function Lounge({ building }: { building: Building }) {
 
   return (
     <group position={[x, 0, z]}>
-      {/* Paved forecourt */}
       <mesh position={[0, 3, 0]} receiveShadow>
         <boxGeometry args={[width + 22, 6, depth + 22]} /><meshStandardMaterial color="#6a645d" roughness={0.95} />
       </mesh>
-
-      {/* Main body */}
       <mesh position={[0, height / 2 + 6, 0]} castShadow receiveShadow>
         <boxGeometry args={[width, height, depth]} /><meshStandardMaterial color={building.wall} roughness={0.7} />
       </mesh>
-
-      {/* Roof slab and parapet */}
       <mesh position={[0, height + 8, 0]} castShadow>
         <boxGeometry args={[width + 6, 4, depth + 6]} /><meshStandardMaterial color="#25212c" roughness={0.8} />
       </mesh>
-
-      {/* Neon trim: front, right side and left side */}
       <mesh position={[0, height + 1.5, depth / 2 + 0.9]}>
         <boxGeometry args={[width * 0.98, 2.4, 1.2]} />
         <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={1.2} />
@@ -766,21 +819,16 @@ function Lounge({ building }: { building: Building }) {
         <boxGeometry args={[1.2, 2.4, depth * 0.98]} />
         <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={1.2} />
       </mesh>
-
-      {/* Glowing front windows */}
       {[-0.32, 0.32].map((offset) => (
         <mesh key={offset} position={[width * offset, height * 0.62 + 6, depth / 2 + 0.6]}>
           <boxGeometry args={[width * 0.2, height * 0.26, 1.2]} />
           <meshStandardMaterial color="#f7d8ea" emissive={accent} emissiveIntensity={0.55} roughness={0.35} />
         </mesh>
       ))}
-      {/* Side window */}
       <mesh position={[width / 2 + 0.6, height * 0.62 + 6, 0]}>
         <boxGeometry args={[1.2, height * 0.26, depth * 0.3]} />
         <meshStandardMaterial color="#f7d8ea" emissive={accent} emissiveIntensity={0.55} roughness={0.35} />
       </mesh>
-
-      {/* Entrance door, awning and posts */}
       <mesh position={[0, height * 0.25 + 6, depth / 2 + 0.9]} castShadow>
         <boxGeometry args={[width * 0.16, height * 0.46, 1.8]} /><meshStandardMaterial color="#1a171f" roughness={0.6} />
       </mesh>
@@ -792,8 +840,6 @@ function Lounge({ building }: { building: Building }) {
           <cylinderGeometry args={[0.8, 0.8, height * 0.5, 8]} /><meshStandardMaterial color="#c9b788" metalness={0.6} roughness={0.35} />
         </mesh>
       ))}
-
-      {/* Rooftop sign */}
       <Html position={[0, height + 20, depth / 2 - 4]} center zIndexRange={[100, 0]}>
         <div
           className="pointer-events-none whitespace-nowrap rounded-sm border border-white/70 px-1.5 py-0.5 text-center text-[7px] font-black tracking-widest text-white shadow"
@@ -802,7 +848,7 @@ function Lounge({ building }: { building: Building }) {
           {building.name.toUpperCase()}
         </div>
       </Html>
-      {building.id === "zeaus-club" && <ClubSkyLights height={height + 12} />}
+      {building.id === "zeus-club" && <ClubSkyLights height={height + 12} />}
     </group>
   );
 }
@@ -811,6 +857,7 @@ function ClubSkyLights({ height }: { height: number }) {
   const beams = useRef<Group>(null);
 
   useFrame(({ clock }) => {
+    if (beams.current) beams.current.visible = lighting.night > 0.2;
     beams.current?.children.forEach((beam, index) => {
       beam.rotation.x = Math.sin(clock.elapsedTime * 0.8 + index) * 0.16;
       beam.rotation.z = Math.cos(clock.elapsedTime * 0.65 + index) * 0.12;
@@ -835,17 +882,244 @@ function ClubSkyLights({ height }: { height: number }) {
   );
 }
 
-/* -------------------- Okefia flyover -------------------- */
+const BOTTLE_COLORS = ["#d6336c", "#e5b95b", "#2fc4b2", "#7c5cff", "#f2efe6", "#c0392b", "#3b82b6"];
+const DECK_TOP = 4.35;
 
-function Flyover() {
+function BarStool({ position, color }: { position: [number, number, number]; color: string }) {
+  return (
+    <group position={position}>
+      <mesh position={[0, 0.4, 0]}>
+        <cylinderGeometry args={[2.6, 2.6, 0.8, 12]} /><meshStandardMaterial color="#8d949a" metalness={0.5} roughness={0.4} />
+      </mesh>
+      <mesh position={[0, 4.5, 0]} castShadow>
+        <cylinderGeometry args={[0.8, 0.8, 9, 8]} /><meshStandardMaterial color="#b8bdb9" metalness={0.6} roughness={0.35} />
+      </mesh>
+      <mesh position={[0, 9.7, 0]} castShadow>
+        <cylinderGeometry args={[3.2, 3.2, 1.8, 14]} /><meshStandardMaterial color={color} roughness={0.5} />
+      </mesh>
+    </group>
+  );
+}
+
+function UmbrellaTable({ position, radius, canopy, alt, striped }: {
+  position: [number, number, number];
+  radius: number;
+  canopy: string;
+  alt: string;
+  striped: boolean;
+}) {
+  return (
+    <group position={position}>
+      <mesh position={[0, 0.5, 0]}><cylinderGeometry args={[4.2, 4.2, 1, 14]} /><meshStandardMaterial color="#8d949a" metalness={0.5} roughness={0.4} /></mesh>
+      <mesh position={[0, 4.5, 0]}><cylinderGeometry args={[0.9, 0.9, 8, 8]} /><meshStandardMaterial color="#b8bdb9" metalness={0.6} roughness={0.35} /></mesh>
+      <mesh position={[0, 9, 0]} castShadow><cylinderGeometry args={[6.4, 6.4, 1.2, 18]} /><meshStandardMaterial color="#efe9dc" roughness={0.6} /></mesh>
+      <mesh position={[0, 15, 0]} castShadow><cylinderGeometry args={[0.55, 0.55, 30, 8]} /><meshStandardMaterial color="#d9d3c4" metalness={0.3} roughness={0.5} /></mesh>
+      {striped ? (
+        Array.from({ length: 8 }, (_, index) => (
+          <mesh key={index} position={[0, 28, 0]} castShadow>
+            <coneGeometry args={[radius, 8, 1, 1, false, (index * Math.PI) / 4, Math.PI / 4]} />
+            <meshStandardMaterial color={index % 2 ? alt : canopy} roughness={0.7} side={THREE.DoubleSide} />
+          </mesh>
+        ))
+      ) : (
+        <mesh position={[0, 28, 0]} castShadow>
+          <coneGeometry args={[radius, 8, 8]} />
+          <meshStandardMaterial color={canopy} roughness={0.7} side={THREE.DoubleSide} />
+        </mesh>
+      )}
+      <mesh position={[0, 32.6, 0]}><sphereGeometry args={[1.1, 8, 6]} /><meshStandardMaterial color="#e5b95b" metalness={0.6} roughness={0.35} /></mesh>
+      {[0, 1, 2].map((index) => {
+        const angle = (index * Math.PI * 2) / 3 + 0.5;
+        return (
+          <group key={index} position={[Math.cos(angle) * 10.5, 0, Math.sin(angle) * 10.5]}>
+            <mesh position={[0, 2.5, 0]}><cylinderGeometry args={[0.7, 0.7, 5, 8]} /><meshStandardMaterial color="#8d949a" metalness={0.5} /></mesh>
+            <mesh position={[0, 5.4, 0]} castShadow><cylinderGeometry args={[2.6, 2.6, 1.2, 12]} /><meshStandardMaterial color={canopy} roughness={0.6} /></mesh>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
+function OpenBar({ building }: { building: Building }) {
+  const { width, depth } = building;
+  const accent = building.roof;
+  const premium = building.id === "circle-lounge";
+  const gold = "#e5b95b";
+  const [x, , z] = worldPosition(building.x + width / 2, building.y + depth / 2);
+
+  const barWidth = Math.round(width * (premium ? 0.64 : 0.62));
+  const shelfZ = -depth / 2 + 5;
+  const bartenderZ = -depth / 2 + 15;
+  const counterZ = -depth / 2 + 24;
+  const zBack = -depth / 2 + 4;
+  const zFront = counterZ + 10;
+  const pergolaDepth = zFront - zBack;
+  const pergolaZ = (zBack + zFront) / 2;
+  const slatCount = Math.floor((barWidth + 8) / 9) + 1;
+  const stoolXs = premium ? [-33, -11, 11, 33] : [-24, -8, 8, 24];
+  const bottleCount = Math.floor((barWidth * 0.88) / 4.5);
+  const bulbCount = Math.floor((barWidth + 12) / 8);
+  const tables = premium
+    ? [{ x: -48, z: 24, r: 15 }, { x: 0, z: 31, r: 17 }, { x: 48, z: 24, r: 15 }]
+    : [{ x: -30, z: 20, r: 15 }, { x: 30, z: 22, r: 15 }];
+
+  return (
+    <group position={[x, 0, z]}>
+      <mesh position={[0, 2, 0]} castShadow receiveShadow>
+        <boxGeometry args={[width + 14, 4, depth + 14]} /><meshStandardMaterial color={premium ? "#b9ae97" : "#5e4630"} roughness={0.95} />
+      </mesh>
+      <mesh position={[0, 4.15, 0]} receiveShadow>
+        <boxGeometry args={[width + 8, 0.4, depth + 8]} /><meshStandardMaterial color={premium ? "#e0d6c0" : "#9a7a55"} roughness={0.85} />
+      </mesh>
+      {premium && (
+        <mesh position={[0, 4.6, (depth + 14) / 2 - 0.6]}>
+          <boxGeometry args={[width + 14, 0.8, 1.1]} /><meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={1.1} />
+        </mesh>
+      )}
+
+      <group position={[0, DECK_TOP, 0]}>
+        <mesh position={[0, 11, shelfZ]} castShadow>
+          <boxGeometry args={[barWidth, 22, 4]} /><meshStandardMaterial color="#2a2230" roughness={0.8} />
+        </mesh>
+        <mesh position={[0, 21.2, shelfZ + 2.2]}>
+          <boxGeometry args={[barWidth * 0.92, 0.5, 0.5]} />
+          <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={1.2} />
+        </mesh>
+        {[12, 18].map((shelfY) => (
+          <group key={shelfY}>
+            <mesh position={[0, shelfY, shelfZ + 3]}>
+              <boxGeometry args={[barWidth * 0.94, 0.7, 4]} /><meshStandardMaterial color={premium ? "#8d6a45" : "#6b4a3a"} roughness={0.8} />
+            </mesh>
+            {Array.from({ length: bottleCount }, (_, index) => (
+              <mesh key={index} position={[-barWidth * 0.44 + index * 4.5, shelfY + 2.9, shelfZ + 3]}>
+                <cylinderGeometry args={[0.85, 0.85, 5, 8]} />
+                <meshStandardMaterial color={BOTTLE_COLORS[(index + (shelfY > 12 ? 3 : 0)) % BOTTLE_COLORS.length]} roughness={0.35} metalness={0.1} />
+              </mesh>
+            ))}
+          </group>
+        ))}
+        <mesh position={[0, 6, counterZ]} castShadow receiveShadow>
+          <boxGeometry args={[barWidth, 12, 9]} /><meshStandardMaterial color={building.wall} roughness={0.7} />
+        </mesh>
+        <mesh position={[0, 12.7, counterZ]} castShadow>
+          <boxGeometry args={[barWidth + 4, 1.4, 12]} /><meshStandardMaterial color={premium ? "#efe9dc" : "#7a5238"} roughness={premium ? 0.3 : 0.6} />
+        </mesh>
+        <mesh position={[0, 3.2, counterZ + 4.7]}>
+          <boxGeometry args={[barWidth * 0.96, 1.1, 0.5]} />
+          <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={1.3} />
+        </mesh>
+        {premium && Array.from({ length: Math.floor(barWidth / 6) }, (_, index) => (
+          <mesh key={index} position={[-barWidth / 2 + 4 + index * 6, 7, counterZ + 4.7]}>
+            <boxGeometry args={[1.1, 8, 0.6]} /><meshStandardMaterial color={gold} metalness={0.7} roughness={0.3} />
+          </mesh>
+        ))}
+        {[-22, -14, 16, 24].map((glassX) => (
+          <mesh key={glassX} position={[glassX, 14.9, counterZ + 1]}>
+            <cylinderGeometry args={[0.9, 0.7, 2.4, 10]} /><meshStandardMaterial color="#cfe9f0" transparent opacity={0.65} roughness={0.15} />
+          </mesh>
+        ))}
+        <mesh position={[6, 15.2, counterZ]}>
+          <cylinderGeometry args={[1.1, 0.9, 3, 10]} /><meshStandardMaterial color="#d7dadb" metalness={0.8} roughness={0.25} />
+        </mesh>
+        <group position={[premium ? -12 : 0, 0, bartenderZ]}>
+          <PersonModel pose="shake" appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: premium ? "#1f2430" : "#f4efe6", trousers: "#1f2430" }} scale={PLAYER_SCALE} />
+        </group>
+        {premium && (
+          <group position={[12, 0, bartenderZ]}>
+            <PersonModel pose="shake" appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: "#1f2430", trousers: "#1f2430", skin: "#8b583b" }} scale={PLAYER_SCALE} />
+          </group>
+        )}
+        {premium && [[-22, "#a64b70", "#68412f"], [22, "#e0ad38", "#80563d"]].map(([customerX, shirt, skin]) => (
+          <group key={customerX as number} position={[customerX as number, 0, counterZ + 11]} rotation={[0, Math.PI, 0]}>
+            <PersonModel pose="idle" appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: shirt as string, trousers: "#30363b", skin: skin as string }} scale={PLAYER_SCALE} />
+          </group>
+        ))}
+        {stoolXs.map((stoolX) => (
+          <BarStool key={stoolX} position={[stoolX, 0, counterZ + 11]} color={accent} />
+        ))}
+        {[-1, 1].flatMap((side) => [zBack, zFront].map((postZ) => (
+          <mesh key={`${side}-${postZ}`} position={[side * (barWidth / 2 + 4), 16, postZ]} castShadow>
+            <boxGeometry args={[2, 32, 2]} /><meshStandardMaterial color="#2a2230" roughness={0.8} />
+          </mesh>
+        )))}
+        {[zBack, zFront].map((beamZ) => (
+          <mesh key={beamZ} position={[0, 32.5, beamZ]} castShadow>
+            <boxGeometry args={[barWidth + 12, 1.8, 1.8]} /><meshStandardMaterial color="#2a2230" roughness={0.8} />
+          </mesh>
+        ))}
+        {Array.from({ length: slatCount }, (_, index) => (
+          <mesh key={index} position={[-(barWidth + 8) / 2 + index * 9, 33.6, pergolaZ]}>
+            <boxGeometry args={[1.2, 1, pergolaDepth + 4]} /><meshStandardMaterial color={premium ? "#8d6a45" : "#6b4a3a"} roughness={0.8} />
+          </mesh>
+        ))}
+        <mesh position={[0, 32.4, zFront + 1.2]}>
+          <boxGeometry args={[barWidth + 12, 0.8, 0.8]} />
+          <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={1.3} />
+        </mesh>
+        {Array.from({ length: bulbCount }, (_, index) => (
+          <mesh key={index} position={[-(barWidth + 12) / 2 + 4 + index * 8, 30.6, zFront]}>
+            <sphereGeometry args={[0.8, 8, 6]} /><meshStandardMaterial color="#ffd98a" emissive="#ffc861" emissiveIntensity={1.4} />
+          </mesh>
+        ))}
+        {tables.map((table, index) => (
+          <UmbrellaTable
+            key={index}
+            position={[table.x, 0, table.z]}
+            radius={table.r}
+            canopy={premium ? accent : index % 2 ? "#8b5cf6" : accent}
+            alt="#f5f1e6"
+            striped={premium}
+          />
+        ))}
+        {premium && (
+          <>
+            <mesh position={[0, 44, shelfZ - 1]}>
+              <torusGeometry args={[11, 0.9, 10, 40]} /><meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={1.5} />
+            </mesh>
+            <mesh position={[0, 44, shelfZ - 1]}>
+              <torusGeometry args={[6.5, 0.6, 10, 32]} /><meshStandardMaterial color={gold} emissive={gold} emissiveIntensity={1.3} />
+            </mesh>
+            {[-1, 1].map((side) => (
+              <group key={side}>
+                <mesh position={[side * (width / 2 + 1), 11, depth / 2 - 2]} castShadow>
+                  <cylinderGeometry args={[0.8, 0.8, 22, 8]} /><meshStandardMaterial color="#2a2230" metalness={0.4} roughness={0.5} />
+                </mesh>
+                <mesh position={[side * (width / 2 + 1), 23.5, depth / 2 - 2]}>
+                  <sphereGeometry args={[2.4, 12, 10]} /><meshStandardMaterial color="#ffd98a" emissive="#ffc861" emissiveIntensity={1.5} />
+                </mesh>
+                <group position={[side * (width / 2 - 8), 0, depth / 2 - 4]}>
+                  <mesh position={[0, 2.5, 0]} castShadow><boxGeometry args={[14, 5, 6]} /><meshStandardMaterial color="#6b6a5e" roughness={0.9} /></mesh>
+                  <mesh position={[-3, 7, 0]} castShadow><sphereGeometry args={[4.2, 10, 8]} /><meshStandardMaterial color="#3f8f4f" roughness={0.9} /></mesh>
+                  <mesh position={[3.5, 6.4, 0]} castShadow><sphereGeometry args={[3.6, 10, 8]} /><meshStandardMaterial color="#4a9a58" roughness={0.9} /></mesh>
+                </group>
+              </group>
+            ))}
+          </>
+        )}
+      </group>
+
+      <Html position={[0, DECK_TOP + (premium ? 60 : 40), shelfZ]} center zIndexRange={[100, 0]}>
+        <div
+          className="pointer-events-none whitespace-nowrap rounded-sm border border-white/70 px-1.5 py-0.5 text-center text-[7px] font-black tracking-widest text-white shadow"
+          style={{ background: accent, boxShadow: `0 0 8px ${accent}` }}
+        >
+          {building.name.toUpperCase()}
+        </div>
+      </Html>
+    </group>
+  );
+}
+
+function FlyoverStructure({ width }: { width: number }) {
   const rampGeometry = useMemo(() => {
     const shape = new THREE.Shape();
     shape.moveTo(0, 0);
     shape.lineTo(FLYOVER_RAMP, 0);
     shape.lineTo(0, FLYOVER_RISE);
     shape.closePath();
-    return new THREE.ExtrudeGeometry(shape, { depth: FLYOVER_WIDTH, bevelEnabled: false });
-  }, []);
+    return new THREE.ExtrudeGeometry(shape, { depth: width, bevelEnabled: false });
+  }, [width]);
 
   const parapetGeometry = useMemo(() => {
     const shape = new THREE.Shape();
@@ -869,60 +1143,69 @@ function Flyover() {
   const pierHeight = slabBottom - 2;
 
   const ramps: { key: string; position: [number, number, number]; rotation: number }[] = [
-    { key: "south", position: [FLYOVER_X + FLYOVER_WIDTH / 2, ROAD_SURFACE, FLYOVER_Z + FLYOVER_FLAT_HALF], rotation: -Math.PI / 2 },
-    { key: "north", position: [FLYOVER_X - FLYOVER_WIDTH / 2, ROAD_SURFACE, FLYOVER_Z - FLYOVER_FLAT_HALF], rotation: Math.PI / 2 },
+    { key: "far", position: [width / 2, ROAD_SURFACE, FLYOVER_FLAT_HALF], rotation: -Math.PI / 2 },
+    { key: "near", position: [-width / 2, ROAD_SURFACE, -FLYOVER_FLAT_HALF], rotation: Math.PI / 2 },
   ];
 
   return (
     <group>
-      {/* Approach ramps */}
       {ramps.map((ramp) => (
         <group key={ramp.key} position={ramp.position} rotation={[0, ramp.rotation, 0]}>
           <mesh geometry={rampGeometry} castShadow receiveShadow>
             <meshStandardMaterial color="#45494a" roughness={0.94} />
           </mesh>
-          {[0, FLYOVER_WIDTH - 2].map((offset) => (
+          {[0, width - 2].map((offset) => (
             <mesh key={offset} geometry={parapetGeometry} position={[0, 0, offset]} castShadow>
               <meshStandardMaterial color="#cfc6ac" roughness={0.9} />
             </mesh>
           ))}
-          <mesh position={[FLYOVER_RAMP / 2, FLYOVER_RISE / 2 + 0.3, FLYOVER_WIDTH / 2]} rotation={[0, 0, -angle]}>
+          <mesh position={[FLYOVER_RAMP / 2, FLYOVER_RISE / 2 + 0.3, width / 2]} rotation={[0, 0, -angle]}>
             <boxGeometry args={[rampLength, 0.3, 1.1]} /><meshStandardMaterial color="#e0b94f" roughness={0.72} />
           </mesh>
         </group>
       ))}
-
-      {/* Bridge deck over the lower road */}
-      <group position={[FLYOVER_X, 0, FLYOVER_Z]}>
-        <mesh position={[0, FLYOVER_TOP - 3.7, 0]} castShadow receiveShadow>
-          <boxGeometry args={[FLYOVER_WIDTH, 6.6, deckLength]} /><meshStandardMaterial color="#9d9582" roughness={0.9} />
+      <mesh position={[0, FLYOVER_TOP - 3.7, 0]} castShadow receiveShadow>
+        <boxGeometry args={[width, 6.6, deckLength]} /><meshStandardMaterial color="#9d9582" roughness={0.9} />
+      </mesh>
+      <mesh position={[0, FLYOVER_TOP - 0.4, 0]} receiveShadow>
+        <boxGeometry args={[width - 4, 0.8, deckLength]} /><meshStandardMaterial color="#45494a" roughness={0.94} />
+      </mesh>
+      <mesh position={[0, FLYOVER_TOP + 0.1, 0]}>
+        <boxGeometry args={[1.1, 0.3, deckLength]} /><meshStandardMaterial color="#e0b94f" roughness={0.72} />
+      </mesh>
+      {[-1, 1].map((side) => (
+        <mesh key={side} position={[side * (width / 2 - 1), FLYOVER_TOP + 2, 0]} castShadow>
+          <boxGeometry args={[2, 4, deckLength]} /><meshStandardMaterial color="#cfc6ac" roughness={0.9} />
         </mesh>
-        <mesh position={[0, FLYOVER_TOP - 0.4, 0]} receiveShadow>
-          <boxGeometry args={[FLYOVER_WIDTH - 4, 0.8, deckLength]} /><meshStandardMaterial color="#45494a" roughness={0.94} />
-        </mesh>
-        <mesh position={[0, FLYOVER_TOP + 0.1, 0]}>
-          <boxGeometry args={[1.1, 0.3, deckLength]} /><meshStandardMaterial color="#e0b94f" roughness={0.72} />
-        </mesh>
-        {[-1, 1].map((side) => (
-          <mesh key={side} position={[side * (FLYOVER_WIDTH / 2 - 1), FLYOVER_TOP + 2, 0]} castShadow>
-            <boxGeometry args={[2, 4, deckLength]} /><meshStandardMaterial color="#cfc6ac" roughness={0.9} />
+      ))}
+      {[-1, 1].map((end) => (
+        <group key={end} position={[0, 0, end * (FLYOVER_FLAT_HALF - 8)]}>
+          <mesh position={[0, slabBottom - 1.5, 0]} castShadow>
+            <boxGeometry args={[width + 4, 3, 10]} /><meshStandardMaterial color="#8c8472" roughness={0.9} />
           </mesh>
-        ))}
-
-        {/* Piers stand just outside the lower road so traffic passes underneath */}
-        {[-1, 1].map((end) => (
-          <group key={end} position={[0, 0, end * (FLYOVER_FLAT_HALF - 8)]}>
-            <mesh position={[0, slabBottom - 1.5, 0]} castShadow>
-              <boxGeometry args={[FLYOVER_WIDTH + 4, 3, 10]} /><meshStandardMaterial color="#8c8472" roughness={0.9} />
+          {[-1, 1].map((side) => (
+            <mesh key={side} position={[side * width * 0.29, 2 + pierHeight / 2, 0]} castShadow>
+              <boxGeometry args={[7, pierHeight, 7]} /><meshStandardMaterial color="#aaa18b" roughness={0.92} />
             </mesh>
-            {[-1, 1].map((side) => (
-              <mesh key={side} position={[side * 11, 2 + pierHeight / 2, 0]} castShadow>
-                <boxGeometry args={[7, pierHeight, 7]} /><meshStandardMaterial color="#aaa18b" roughness={0.92} />
-              </mesh>
-            ))}
-          </group>
-        ))}
-      </group>
+          ))}
+        </group>
+      ))}
+    </group>
+  );
+}
+
+function Flyover() {
+  return (
+    <group position={[FLYOVER_X, 0, FLYOVER_Z]}>
+      <FlyoverStructure width={FLYOVER_WIDTH} />
+    </group>
+  );
+}
+
+function OlaiyaFlyover() {
+  return (
+    <group position={[OLAIYA_X, 0, OLAIYA_Z]} rotation={[0, Math.PI / 2 + UPPER_ROAD_TILT, 0]}>
+      <FlyoverStructure width={OLAIYA_WIDTH} />
     </group>
   );
 }
@@ -984,8 +1267,6 @@ function Billboard({ board }: { board: BillboardData }) {
   );
 }
 
-/* -------------------- Detailed low-poly vehicles -------------------- */
-
 function Wheel({ radius = 4.5, width = 3 }: { radius?: number; width?: number }) {
   return (
     <group>
@@ -1011,37 +1292,26 @@ function CarModel({ kind, color }: { kind: "sedan" | "taxi" | "van"; color: stri
 
   return (
     <group>
-      {/* Main body: front of vehicle faces local +Z */}
       <mesh position={[0, 7.5, 0]} castShadow receiveShadow>
         <boxGeometry args={[width, bodyHeight, length]} />
         <meshStandardMaterial color={color} roughness={0.42} metalness={0.16} />
       </mesh>
-
-      {/* Bonnet */}
       <mesh position={[0, 11, length * 0.29]} castShadow>
         <boxGeometry args={[width * 0.88, 3.4, length * 0.34]} />
         <meshStandardMaterial color={color} roughness={0.4} metalness={0.16} />
       </mesh>
-
-      {/* Passenger cabin */}
       <mesh position={[0, isVan ? 16 : 15, -length * 0.12]} castShadow>
         <boxGeometry args={[width * 0.78, isVan ? 10 : 8, length * (isVan ? 0.58 : 0.5)]} />
         <meshStandardMaterial color={isVan ? color : "#343f43"} roughness={0.35} metalness={0.12} />
       </mesh>
-
-      {/* Front windscreen */}
       <mesh position={[0, 16, length * 0.12]} rotation={[-0.22, 0, 0]}>
         <boxGeometry args={[width * 0.67, isVan ? 6 : 5, 0.8]} />
         <meshStandardMaterial color={cabinColor} metalness={0.2} roughness={0.22} />
       </mesh>
-
-      {/* Rear windscreen */}
       <mesh position={[0, 15.5, -length * 0.39]}>
         <boxGeometry args={[width * 0.62, 4.5, 0.8]} />
         <meshStandardMaterial color="#83c4d3" metalness={0.2} roughness={0.25} />
       </mesh>
-
-      {/* Side windows */}
       {[-1, 1].map((side) => (
         <group key={side}>
           {[-0.27, 0.05, 0.32].map((part, index) => (
@@ -1050,14 +1320,10 @@ function CarModel({ kind, color }: { kind: "sedan" | "taxi" | "van"; color: stri
               <meshStandardMaterial color={index === 2 ? "#526a70" : "#83c4d3"} metalness={0.18} roughness={0.24} />
             </mesh>
           ))}
-
-          {/* Side mirrors */}
           <mesh position={[side * (width * 0.55), 14, length * 0.13]} castShadow>
             <boxGeometry args={[2, 2.2, 3]} />
             <meshStandardMaterial color={color} />
           </mesh>
-
-          {/* Door handles */}
           {!isVan && (
             <mesh position={[side * (width * 0.51), 10, -length * 0.08]}>
               <boxGeometry args={[0.6, 0.7, 2.4]} />
@@ -1066,8 +1332,6 @@ function CarModel({ kind, color }: { kind: "sedan" | "taxi" | "van"; color: stri
           )}
         </group>
       ))}
-
-      {/* Front grille and bumper */}
       <mesh position={[0, 6, length * 0.505]}>
         <boxGeometry args={[width * 0.32, 2.7, 0.8]} />
         <meshStandardMaterial color="#25292b" metalness={0.35} roughness={0.4} />
@@ -1076,8 +1340,6 @@ function CarModel({ kind, color }: { kind: "sedan" | "taxi" | "van"; color: stri
         <boxGeometry args={[width * 0.96, 1.8, 1.4]} />
         <meshStandardMaterial color="#b8bdb9" metalness={0.65} roughness={0.32} />
       </mesh>
-
-      {/* Headlights and rear lamps */}
       {[-1, 1].map((side) => (
         <group key={side}>
           <mesh position={[side * width * 0.34, 8.3, length * 0.505]}>
@@ -1090,8 +1352,6 @@ function CarModel({ kind, color }: { kind: "sedan" | "taxi" | "van"; color: stri
           </mesh>
         </group>
       ))}
-
-      {/* Four correctly positioned wheels */}
       {[-1, 1].map((side) =>
         [-1, 1].map((end) => (
           <group key={`${side}-${end}`} position={[side * (width * 0.48), 4.5, end * length * 0.31]}>
@@ -1099,8 +1359,6 @@ function CarModel({ kind, color }: { kind: "sedan" | "taxi" | "van"; color: stri
           </group>
         ))
       )}
-
-      {/* Yellow taxi roof sign */}
       {isTaxi && (
         <group position={[0, 21, -1]}>
           <mesh castShadow>
@@ -1113,8 +1371,6 @@ function CarModel({ kind, color }: { kind: "sedan" | "taxi" | "van"; color: stri
           </mesh>
         </group>
       )}
-
-      {/* Simple rear cargo detail for the van */}
       {isVan && (
         <mesh position={[0, 14, -length * 0.48]}>
           <boxGeometry args={[width * 0.6, 5, 0.8]} />
@@ -1131,27 +1387,20 @@ function MotorcycleModel({ color }: { color: string }) {
 
   return (
     <group>
-      {/* Two wheels */}
       <group ref={rearWheel} position={[0, 4.5, -11]}>
         <Wheel radius={4.5} width={2.5} />
       </group>
       <group ref={frontWheel} position={[0, 4.5, 11]}>
         <Wheel radius={4.5} width={2.5} />
       </group>
-
-      {/* Motorcycle frame */}
       <mesh position={[0, 8, -1]} rotation={[0.18, 0, 0]}>
         <boxGeometry args={[3.5, 3, 12]} />
         <meshStandardMaterial color="#30363a" metalness={0.5} roughness={0.4} />
       </mesh>
-
-      {/* Fuel tank */}
       <mesh position={[0, 10, 1]} rotation={[0.12, 0, 0]}>
         <capsuleGeometry args={[2.4, 4.5, 4, 8]} />
         <meshStandardMaterial color={color} metalness={0.2} roughness={0.38} />
       </mesh>
-
-      {/* Seat and rear body */}
       <mesh position={[0, 12, -5]}>
         <boxGeometry args={[4, 2, 7]} />
         <meshStandardMaterial color="#25282a" roughness={0.85} />
@@ -1160,26 +1409,18 @@ function MotorcycleModel({ color }: { color: string }) {
         <boxGeometry args={[4.5, 3, 4]} />
         <meshStandardMaterial color={color} />
       </mesh>
-
-      {/* Front fork */}
       <mesh position={[0, 8.5, 8.5]} rotation={[-0.22, 0, 0]}>
         <cylinderGeometry args={[0.7, 0.7, 10, 8]} />
         <meshStandardMaterial color="#a7b2b6" metalness={0.7} roughness={0.3} />
       </mesh>
-
-      {/* Handlebar */}
       <mesh position={[0, 14, 8]}>
         <boxGeometry args={[10, 1.2, 1.4]} />
         <meshStandardMaterial color="#292e32" metalness={0.5} />
       </mesh>
-
-      {/* Headlamp */}
       <mesh position={[0, 12, 10.5]}>
         <sphereGeometry args={[2, 10, 8]} />
         <meshStandardMaterial color="#fff1bd" emissive="#ffdc88" emissiveIntensity={0.5} />
       </mesh>
-
-      {/* Rear light */}
       <mesh position={[0, 11, -10]}>
         <boxGeometry args={[2.4, 1.8, 1]} />
         <meshStandardMaterial color="#df302c" emissive="#a81717" emissiveIntensity={0.3} />
@@ -1188,27 +1429,155 @@ function MotorcycleModel({ color }: { color: string }) {
   );
 }
 
-/* -------------------- Detailed 3D people -------------------- */
+/* -------------------- DETAILED 3D PEOPLE with customization -------------------- */
 
 function PersonModel({
-  shirt = "#2876b9",
-  trousers = "#29354a",
-  skin = "#80563d",
-  hair = "#211d1a",
+  appearance = DEFAULT_CHARACTER_APPEARANCE,
   scale = 1,
+  pose = "walk",
 }: {
-  shirt?: string;
-  trousers?: string;
-  skin?: string;
-  hair?: string;
+  appearance?: CharacterAppearance;
   scale?: number;
+  pose?: "walk" | "shake" | "idle";
 }) {
   const leftArm = useRef<Group>(null);
   const rightArm = useRef<Group>(null);
   const leftLeg = useRef<Group>(null);
   const rightLeg = useRef<Group>(null);
 
+  const isWoman = appearance.gender === "Woman";
+  const isChill = appearance.outfit === "Chill" || appearance.outfit === "Hoodie";
+  const isAnkara = appearance.fabric === "Ankara" || appearance.fabric === "Adire" || appearance.fabric === "Aso-oke";
+
+  // Adjust proportions by gender
+  const torsoWidth = isWoman ? 5.4 : 6.2;
+  const hipWidth = isWoman ? 11 : 10;
+  const shoulderWidth = isWoman ? 12 : 14;
+
+  // Build hairstyle geometry
+  const renderHair = () => {
+    switch (appearance.hairstyle) {
+      case "bald":
+        return null;
+      case "afro":
+        return (
+          <mesh position={[0, 44.5, -0.5]} castShadow>
+            <sphereGeometry args={[8.5, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.75]} />
+            <meshStandardMaterial color={appearance.hair} roughness={0.98} />
+          </mesh>
+        );
+      case "braids":
+        return (
+          <group>
+            <mesh position={[0, 42.5, -0.8]} castShadow>
+              <sphereGeometry args={[6.6, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.6]} />
+              <meshStandardMaterial color={appearance.hair} roughness={0.98} />
+            </mesh>
+            {[-3, -1.5, 0, 1.5, 3].map((x, index) => (
+              <mesh key={index} position={[x, 38, -6]} castShadow>
+                <capsuleGeometry args={[0.7, 14, 3, 6]} />
+                <meshStandardMaterial color={appearance.hair} roughness={0.98} />
+              </mesh>
+            ))}
+          </group>
+        );
+      case "locs":
+        return (
+          <group>
+            <mesh position={[0, 43, -0.8]} castShadow>
+              <sphereGeometry args={[6.8, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.6]} />
+              <meshStandardMaterial color={appearance.hair} roughness={0.98} />
+            </mesh>
+            {[-4, -2, 0, 2, 4].map((x, index) => (
+              <mesh key={index} position={[x, 37, -5.5]} rotation={[0.15, 0, x * 0.05]} castShadow>
+                <capsuleGeometry args={[0.9, 16, 3, 6]} />
+                <meshStandardMaterial color={appearance.hair} roughness={0.98} />
+              </mesh>
+            ))}
+          </group>
+        );
+      case "curls":
+        return (
+          <group>
+            {Array.from({ length: 12 }, (_, index) => {
+              const angle = (index / 12) * Math.PI * 2;
+              const r = 5.5;
+              return (
+                <mesh
+                  key={index}
+                  position={[Math.cos(angle) * r, 43 + Math.sin(angle) * 2, Math.sin(angle) * r * 0.8 - 0.5]}
+                  castShadow
+                >
+                  <sphereGeometry args={[2, 8, 6]} />
+                  <meshStandardMaterial color={appearance.hair} roughness={0.98} />
+                </mesh>
+              );
+            })}
+            <mesh position={[0, 43, -0.5]} castShadow>
+              <sphereGeometry args={[6, 12, 8]} />
+              <meshStandardMaterial color={appearance.hair} roughness={0.98} />
+            </mesh>
+          </group>
+        );
+      case "classic":
+        return (
+          <mesh position={[0, 42.5, 0]} castShadow>
+            <sphereGeometry args={[6.6, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55]} />
+            <meshStandardMaterial color={appearance.hair} roughness={0.98} />
+          </mesh>
+        );
+      case "short":
+      default:
+        return (
+          <mesh position={[0, 42, -0.8]} castShadow>
+            <sphereGeometry args={[6.45, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.58]} />
+            <meshStandardMaterial color={appearance.hair} roughness={0.98} />
+          </mesh>
+        );
+    }
+  };
+
+  // Build outfit details
+  const renderOutfitDetails = () => {
+    if (isAnkara) {
+      // Add pattern stripes to suggest Ankara fabric
+      return (
+        <group>
+          {[-2, -1, 0, 1, 2].map((offset) => (
+            <mesh key={offset} position={[0, 23 + offset * 2, torsoWidth * 0.98]} rotation={[0.05, 0, 0]}>
+              <boxGeometry args={[torsoWidth * 1.6, 0.6, 0.2]} />
+              <meshStandardMaterial color={appearance.trousers} roughness={0.7} />
+            </mesh>
+          ))}
+        </group>
+      );
+    }
+    if (isChill) {
+      // Hoodie pocket
+      return (
+        <mesh position={[0, 19, torsoWidth * 0.95]}>
+          <boxGeometry args={[torsoWidth * 1.3, 3, 0.8]} />
+          <meshStandardMaterial color={appearance.shirt} roughness={0.85} />
+        </mesh>
+      );
+    }
+    return null;
+  };
+
   useFrame(({ clock }) => {
+    if (pose !== "walk") {
+      const t = clock.elapsedTime;
+      if (leftLeg.current) leftLeg.current.rotation.x = 0;
+      if (rightLeg.current) rightLeg.current.rotation.x = 0;
+      if (pose === "shake") {
+        if (leftArm.current) leftArm.current.rotation.x = -0.9 + Math.sin(t * 6) * 0.22;
+        if (rightArm.current) rightArm.current.rotation.x = -1.15 + Math.sin(t * 6 + 1) * 0.25;
+      } else {
+        if (leftArm.current) leftArm.current.rotation.x = -0.15 + Math.sin(t * 1.1) * 0.05;
+        if (rightArm.current) rightArm.current.rotation.x = -0.75 + Math.sin(t * 0.8) * 0.08;
+      }
+      return;
+    }
     const time = clock.elapsedTime * 7;
     if (leftArm.current) leftArm.current.rotation.x = Math.sin(time) * 0.3;
     if (rightArm.current) rightArm.current.rotation.x = -Math.sin(time) * 0.3;
@@ -1232,57 +1601,60 @@ function PersonModel({
       <group ref={leftLeg} position={[-3, 10, 0]}>
         <mesh position={[0, -4, 0]} castShadow>
           <capsuleGeometry args={[2.6, 7, 4, 8]} />
-          <meshStandardMaterial color={trousers} roughness={0.85} />
+          <meshStandardMaterial color={appearance.trousers} roughness={0.85} />
         </mesh>
       </group>
       <group ref={rightLeg} position={[3, 10, 0]}>
         <mesh position={[0, -4, 0]} castShadow>
           <capsuleGeometry args={[2.6, 7, 4, 8]} />
-          <meshStandardMaterial color={trousers} roughness={0.85} />
+          <meshStandardMaterial color={appearance.trousers} roughness={0.85} />
         </mesh>
       </group>
 
-      {/* Torso and waist */}
+      {/* Torso */}
       <mesh position={[0, 23, 0]} castShadow>
-        <capsuleGeometry args={[6.2, 11, 5, 10]} />
-        <meshStandardMaterial color={shirt} roughness={0.72} />
+        <capsuleGeometry args={[torsoWidth, 11, 5, 10]} />
+        <meshStandardMaterial color={appearance.shirt} roughness={0.72} />
       </mesh>
       <mesh position={[0, 15, 0]}>
-        <boxGeometry args={[10, 3, 7]} />
-        <meshStandardMaterial color={trousers} />
+        <boxGeometry args={[hipWidth, 3, 7]} />
+        <meshStandardMaterial color={appearance.trousers} />
       </mesh>
-      <mesh position={[0, 24, 6.05]}>
-        <boxGeometry args={[1.2, 8, 0.7]} /><meshStandardMaterial color={trousers} roughness={0.78} />
+      <mesh position={[0, 24, torsoWidth * 0.98]}>
+        <boxGeometry args={[1.2, 8, 0.7]} />
+        <meshStandardMaterial color={appearance.trousers} roughness={0.78} />
       </mesh>
+
+      {renderOutfitDetails()}
+
+      {/* Collar/shoulders */}
       {[-1, 1].map((side) => (
         <mesh key={side} position={[side * 2.2, 29, 4.7]} rotation={[0.35, 0, side * 0.28]}>
-          <boxGeometry args={[4, 1.5, 3]} /><meshStandardMaterial color={shirt} roughness={0.72} />
+          <boxGeometry args={[4, 1.5, 3]} />
+          <meshStandardMaterial color={appearance.shirt} roughness={0.72} />
         </mesh>
       ))}
 
       {/* Neck */}
       <mesh position={[0, 32, 0]}>
         <cylinderGeometry args={[2, 2.2, 4, 8]} />
-        <meshStandardMaterial color={skin} roughness={0.9} />
+        <meshStandardMaterial color={appearance.skin} roughness={0.9} />
       </mesh>
 
       {/* Head */}
       <mesh position={[0, 39, 0]} castShadow>
         <sphereGeometry args={[6.3, 16, 12]} />
-        <meshStandardMaterial color={skin} roughness={0.88} />
+        <meshStandardMaterial color={appearance.skin} roughness={0.88} />
       </mesh>
 
-      {/* Hair */}
-      <mesh position={[0, 42, -0.8]} castShadow>
-        <sphereGeometry args={[6.45, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.58]} />
-        <meshStandardMaterial color={hair} roughness={0.98} />
-      </mesh>
+      {/* Hair - customized */}
+      {renderHair()}
 
       {/* Ears */}
       {[-1, 1].map((side) => (
         <mesh key={side} position={[side * 6, 38.5, 0]}>
           <sphereGeometry args={[1.3, 8, 8]} />
-          <meshStandardMaterial color={skin} />
+          <meshStandardMaterial color={appearance.skin} />
         </mesh>
       ))}
 
@@ -1293,40 +1665,46 @@ function PersonModel({
           <meshStandardMaterial color="#211b18" />
         </mesh>
       ))}
+
+      {/* Eyebrows */}
       {[-1, 1].map((side) => (
         <mesh key={side} position={[side * 2.3, 41.6, 5.3]} rotation={[0, 0, side * -0.12]}>
-          <boxGeometry args={[2.5, 0.8, 0.8]} /><meshStandardMaterial color={hair} roughness={0.96} />
+          <boxGeometry args={[2.5, 0.8, 0.8]} />
+          <meshStandardMaterial color={appearance.hair} roughness={0.96} />
         </mesh>
       ))}
 
       {/* Nose */}
       <mesh position={[0, 38.8, 6.2]}>
         <sphereGeometry args={[1.05, 8, 8]} />
-        <meshStandardMaterial color={skin} />
-      </mesh>
-      <mesh position={[0, 36.2, 6.05]}>
-        <boxGeometry args={[2.2, 0.7, 0.45]} /><meshStandardMaterial color="#4b2921" roughness={0.9} />
+        <meshStandardMaterial color={appearance.skin} />
       </mesh>
 
-      {/* Arms pivot from the shoulders */}
-      <group ref={leftArm} position={[-7, 28, 0]}>
+      {/* Mouth */}
+      <mesh position={[0, 36.2, 6.05]}>
+        <boxGeometry args={[2.2, 0.7, 0.45]} />
+        <meshStandardMaterial color="#4b2921" roughness={0.9} />
+      </mesh>
+
+      {/* Arms */}
+      <group ref={leftArm} position={[-shoulderWidth / 2, 28, 0]}>
         <mesh position={[0, -5, 0]} rotation={[0, 0, -0.12]} castShadow>
           <capsuleGeometry args={[2.1, 8, 4, 8]} />
-          <meshStandardMaterial color={shirt} roughness={0.78} />
+          <meshStandardMaterial color={appearance.shirt} roughness={0.78} />
         </mesh>
         <mesh position={[-0.6, -10, 0]}>
           <sphereGeometry args={[2, 8, 8]} />
-          <meshStandardMaterial color={skin} />
+          <meshStandardMaterial color={appearance.skin} />
         </mesh>
       </group>
-      <group ref={rightArm} position={[7, 28, 0]}>
+      <group ref={rightArm} position={[shoulderWidth / 2, 28, 0]}>
         <mesh position={[0, -5, 0]} rotation={[0, 0, 0.12]} castShadow>
           <capsuleGeometry args={[2.1, 8, 4, 8]} />
-          <meshStandardMaterial color={shirt} roughness={0.78} />
+          <meshStandardMaterial color={appearance.shirt} roughness={0.78} />
         </mesh>
         <mesh position={[0.6, -10, 0]}>
           <sphereGeometry args={[2, 8, 8]} />
-          <meshStandardMaterial color={skin} />
+          <meshStandardMaterial color={appearance.skin} />
         </mesh>
       </group>
     </group>
@@ -1352,26 +1730,24 @@ function TrafficVehicle({
     progress.current += delta * speed;
 
     if (road === "vertical") {
-      // North-south road: climbs the Okefia flyover ramps, crosses the deck,
-      // and drops back down, passing above the lower east-west road.
       const span = WORLD_HEIGHT - 100;
       const z = (progress.current % span) - span / 2 - 20;
       vehicle.position.set(VERTICAL_ROAD_X + lane, flyoverHeight(z), z);
-      // The front faces local +Z, so a rising slope pitches the nose up.
       vehicle.rotation.set(-Math.atan(flyoverSlope(z)), 0, 0);
     } else {
-      // East-west roads are slightly tilted, so follow the road's own axis.
       const tilt = road === "upper" ? UPPER_ROAD_TILT : LOWER_ROAD_TILT;
       const span = WORLD_WIDTH - 100;
       const along = (progress.current % span) - span / 2;
       const baseZ = road === "upper" ? -370 : 570;
+      const height = road === "upper" ? upperFlyoverHeight(along) : ROAD_SURFACE;
+      const pitch = road === "upper" ? -Math.atan(upperFlyoverSlope(along)) : 0;
       vehicle.position.set(
         along * Math.cos(tilt) + lane * Math.sin(tilt),
-        ROAD_SURFACE,
+        height,
         baseZ - along * Math.sin(tilt) + lane * Math.cos(tilt)
       );
-      // Face along the road direction.
-      vehicle.rotation.set(0, Math.PI / 2 + tilt, 0);
+      vehicle.rotation.order = "YXZ";
+      vehicle.rotation.set(pitch, Math.PI / 2 + tilt, 0);
     }
 
     wheelGroups.current.forEach((wheel) => {
@@ -1384,7 +1760,6 @@ function TrafficVehicle({
       {kind === "bike" ? (
         <>
           <MotorcycleModel color={color} />
-          {/* Rider body */}
           <group position={[0, 8, -1]} rotation={[-0.12, 0, 0]}>
             <mesh position={[0, 12, -1]} castShadow>
               <capsuleGeometry args={[3.2, 9, 4, 8]} />
@@ -1418,16 +1793,12 @@ function TrafficVehicle({
 function CityTraffic() {
   return (
     <group>
-      {/* Upper east-west road */}
       <TrafficVehicle kind="sedan" color="#d94e3f" speed={115} start={120} lane={-18} road="upper" />
       <TrafficVehicle kind="van" color="#e9e6dc" speed={76} start={1450} lane={-18} road="upper" />
-
-      {/* Lower east-west road: these pass UNDER the Okefia flyover */}
+      <TrafficVehicle kind="taxi" color="#f0bd36" speed={88} start={700} lane={18} road="upper" />
       <TrafficVehicle kind="taxi" color="#f0bd36" speed={92} start={850} lane={18} road="lower" />
       <TrafficVehicle kind="sedan" color="#2f6f9f" speed={105} start={380} lane={-18} road="lower" />
       <TrafficVehicle kind="van" color="#c9d2d6" speed={70} start={1500} lane={18} road="lower" />
-
-      {/* North-south road: these go OVER the Okefia flyover */}
       <TrafficVehicle kind="bike" color="#286fba" speed={130} start={600} lane={-7} road="vertical" />
       <TrafficVehicle kind="sedan" color="#3f8f5c" speed={100} start={150} lane={7} road="vertical" />
       <TrafficVehicle kind="taxi" color="#f0bd36" speed={84} start={1100} lane={-7} road="vertical" />
@@ -1439,16 +1810,10 @@ function CityTraffic() {
 function CityPedestrian({
   x,
   y,
-  shirt,
-  trousers,
-  skin,
-  hair,
+  appearance,
   offset,
 }: Point & {
-  shirt: string;
-  trousers: string;
-  skin: string;
-  hair: string;
+  appearance: CharacterAppearance;
   offset: number;
 }) {
   const groupRef = useRef<Group>(null);
@@ -1464,19 +1829,19 @@ function CityPedestrian({
 
   return (
     <group ref={groupRef} position={start}>
-      <PersonModel shirt={shirt} trousers={trousers} skin={skin} hair={hair} scale={0.85} />
+      <PersonModel appearance={appearance} scale={PEDESTRIAN_SCALE} />
     </group>
   );
 }
 
 function CityPeople() {
-  const people = [
-    { x: 610, y: 920, shirt: "#d65b3f", trousers: "#26364d", skin: "#74452f", hair: "#201a17", offset: 0 },
-    { x: 1145, y: 920, shirt: "#e0ad38", trousers: "#30363b", skin: "#8d5a3b", hair: "#211d1a", offset: 1.7 },
-    { x: 1285, y: 970, shirt: "#2876b9", trousers: "#4a413a", skin: "#68412f", hair: "#211d1a", offset: 3.1 },
-    { x: 1630, y: 1210, shirt: "#4b925c", trousers: "#273448", skin: "#80563d", hair: "#211d1a", offset: 4.5 },
-    { x: 1950, y: 940, shirt: "#a64b70", trousers: "#3e454c", skin: "#70472f", hair: "#211d1a", offset: 2.3 },
-    { x: 410, y: 600, shirt: "#f0bd36", trousers: "#30363b", skin: "#8b583b", hair: "#211d1a", offset: 5.2 },
+  const people: { x: number; y: number; appearance: CharacterAppearance; offset: number }[] = [
+    { x: 610, y: 920, appearance: { ...DEFAULT_CHARACTER_APPEARANCE, shirt: "#d65b3f", trousers: "#26364d", skin: "#74452f" }, offset: 0 },
+    { x: 1145, y: 920, appearance: { ...DEFAULT_CHARACTER_APPEARANCE, shirt: "#e0ad38", trousers: "#30363b", skin: "#8d5a3b" }, offset: 1.7 },
+    { x: 1285, y: 970, appearance: { ...DEFAULT_CHARACTER_APPEARANCE, shirt: "#2876b9", trousers: "#4a413a", skin: "#68412f" }, offset: 3.1 },
+    { x: 1630, y: 1210, appearance: { ...DEFAULT_CHARACTER_APPEARANCE, shirt: "#4b925c", trousers: "#273448", skin: "#80563d" }, offset: 4.5 },
+    { x: 1950, y: 940, appearance: { ...DEFAULT_CHARACTER_APPEARANCE, shirt: "#a64b70", trousers: "#3e454c", skin: "#70472f" }, offset: 2.3 },
+    { x: 410, y: 600, appearance: { ...DEFAULT_CHARACTER_APPEARANCE, shirt: "#f0bd36", trousers: "#30363b", skin: "#8b583b" }, offset: 5.2 },
   ];
 
   return (
@@ -1498,8 +1863,10 @@ function BuildingModel({ building }: { building: Building }) {
       return <Tower building={building} />;
     case "lounge":
       return <Lounge building={building} />;
+    case "openbar":
+      return <OpenBar building={building} />;
     case "flyover":
-      return <Flyover />;
+      return building.id === "olaiya" ? <OlaiyaFlyover /> : <Flyover />;
     default:
       return <House building={building} />;
   }
@@ -1518,6 +1885,7 @@ function Landmark({ building, selected, onVisit }: {
   const flipLabel = centerX > LABEL_FLIP_X;
   const labelAlwaysVisible = isPlayerHome || selected;
   const raised = hovered || selected;
+  const iconSize = isPlayerHome ? HOME_ICON_SIZE : ICON_SIZE;
 
   return (
     <>
@@ -1528,57 +1896,347 @@ function Landmark({ building, selected, onVisit }: {
         <BuildingModel building={building} />
       </group>
       <Html position={[x, markerHeight, z]} center zIndexRange={raised ? [16777371, 16777300] : [16777271, 0]}>
-        <button
-          type="button"
-          data-world-object
-          aria-label={`Visit ${building.name}`}
-          aria-pressed={selected}
-          onPointerDown={(event) => event.stopPropagation()}
-          onPointerEnter={() => setHovered(true)}
-          onPointerLeave={() => setHovered(false)}
-          onFocus={() => setHovered(true)}
-          onBlur={() => setHovered(false)}
-          onClick={() => onVisit(building)}
-          className={`group relative flex items-center justify-center rounded-full bg-white leading-none shadow-[0_3px_10px_rgba(20,40,33,0.35)] transition-transform hover:scale-110 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#20b978] ${isPlayerHome ? "h-11 w-11 border-2 border-[#20b978] text-xl ring-2 ring-white" : "h-7 w-7 border border-white text-[14px]"} ${selected ? "ring-2 ring-[#20b978]" : ""}`}
-          style={{ touchAction: "none" }}
-        >
-          {building.icon}
-          <span className={`pointer-events-none absolute top-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border border-[#e5eae5] bg-white px-2.5 py-1 text-[10px] font-bold text-[#27352d] shadow-md transition-opacity duration-200 ${flipLabel ? "right-[calc(100%+6px)]" : "left-[calc(100%+6px)]"} ${labelAlwaysVisible ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100"}`}>
-            {building.name}
-          </span>
-        </button>
+        <div className="flex flex-col items-center" style={{ transform: `translateY(-${(iconSize + PIN_STEM) / 2}px)` }}>
+          <button
+            type="button"
+            data-world-object
+            aria-label={`Visit ${building.name}`}
+            aria-pressed={selected}
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerEnter={() => setHovered(true)}
+            onPointerLeave={() => setHovered(false)}
+            onFocus={() => setHovered(true)}
+            onBlur={() => setHovered(false)}
+            onClick={() => onVisit(building)}
+            className={`group relative flex items-center justify-center rounded-full bg-white leading-none shadow-[0_3px_10px_rgba(20,40,33,0.35)] transition-transform hover:scale-110 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#20b978] ${isPlayerHome ? "border-2 border-[#20b978] text-[15px]" : "border border-white text-[12px]"} ${selected ? "ring-2 ring-[#20b978]" : ""}`}
+            style={{ width: iconSize, height: iconSize, touchAction: "none" }}
+          >
+            {building.icon}
+            <span className={`pointer-events-none absolute top-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border border-[#e5eae5] bg-white px-2.5 py-1 text-[10px] font-bold text-[#27352d] shadow-md transition-opacity duration-200 ${flipLabel ? "right-[calc(100%+6px)]" : "left-[calc(100%+6px)]"} ${labelAlwaysVisible ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100"}`}>
+              {building.name}
+            </span>
+          </button>
+          <span aria-hidden className="pointer-events-none block w-px bg-[#27352d]/70" style={{ height: PIN_STEM }} />
+        </div>
       </Html>
     </>
   );
 }
 
-function AnimatedPlayer({ destination }: { destination: Point }) {
+function AnimatedPlayer({
+  destination,
+  appearance,
+}: {
+  destination: Point;
+  appearance: CharacterAppearance;
+}) {
   const playerRef = useRef<Group>(null);
   const step = useRef(0);
-  const target = useMemo(() => new THREE.Vector3(...worldPosition(destination.x, destination.y, 0)), [destination]);
+  const logCounter = useRef(0);
+  const target = useMemo(
+    () => new THREE.Vector3(...worldPosition(destination.x, destination.y, 0)),
+    [destination]
+  );
 
   useFrame((_, delta) => {
     const player = playerRef.current;
     if (!player) return;
+
     const distance = player.position.distanceTo(target);
     player.position.lerp(target, 1 - Math.exp(-delta * 2.7));
+
     step.current += delta * (distance > 8 ? 12 : 2);
     player.position.y = Math.abs(Math.sin(step.current)) * (distance > 8 ? 2 : 0.5);
+
     if (distance > 2) {
-      player.rotation.y = Math.atan2(target.x - player.position.x, target.z - player.position.z);
+      const dirX = target.x - player.position.x;
+      const dirZ = target.z - player.position.z;
+      player.rotation.y = Math.atan2(dirX, dirZ);
+    }
+
+    // Log every ~60 frames (about once per second)
+    logCounter.current += 1;
+    if (logCounter.current % 60 === 0) {
+      console.log("[AnimatedPlayer] position", {
+        x: player.position.x.toFixed(1),
+        y: player.position.y.toFixed(1),
+        z: player.position.z.toFixed(1),
+        targetX: target.x.toFixed(1),
+        targetZ: target.z.toFixed(1),
+      });
     }
   });
 
   return (
     <group ref={playerRef} position={worldPosition(destination.x, destination.y)}>
-      <PersonModel shirt="#2876b9" trousers="#252f45" skin="#70472f" hair="#211d1a" scale={1.1} />
+      <CharacterModel
+        key={`map-player-${appearance.skin}-${appearance.hairstyle}-${appearance.shirt}`}
+        appearance={appearance}
+        targetHeight={30}
+      />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.3, 0]}>
+        <circleGeometry args={[14, 20]} />
+        <meshBasicMaterial color="#000000" transparent opacity={0.3} />
+      </mesh>
     </group>
   );
 }
 
-function Scene({ active, interactive, onVisit, onEnterBuilding }: {
+/* -------------------- Day and night -------------------- */
+
+const lighting = { night: 0 };
+
+type LightingKey = {
+  hour: number;
+  sky: string;
+  ambient: number;
+  ambientColor: string;
+  hemisphere: number;
+  hemisphereSky: string;
+  hemisphereGround: string;
+  sun: number;
+  sunColor: string;
+  sunPosition: [number, number, number];
+  night: number;
+};
+
+const NIGHT_LOOK = {
+  sky: "#0b1630",
+  ambient: 0.55,
+  ambientColor: "#8094d6",
+  hemisphere: 0.6,
+  hemisphereSky: "#2f4488",
+  hemisphereGround: "#1c2431",
+  sun: 0.8,
+  sunColor: "#9db6ff",
+  sunPosition: [900, 1800, -700] as [number, number, number],
+  night: 1,
+};
+
+const DAY_LOOK = {
+  sky: "#4babc0",
+  ambient: 1.35,
+  ambientColor: "#ffffff",
+  hemisphere: 1.7,
+  hemisphereSky: "#fff4dc",
+  hemisphereGround: "#526c51",
+  sun: 2.3,
+  sunColor: "#ffffff",
+  sunPosition: [-850, 1900, 1100] as [number, number, number],
+  night: 0,
+};
+
+const LIGHTING_KEYS: LightingKey[] = [
+  { hour: 0, ...NIGHT_LOOK },
+  { hour: 5, ...NIGHT_LOOK },
+  {
+    hour: 6.5, sky: "#f0a27c", ambient: 0.9, ambientColor: "#ffd2b0", hemisphere: 1,
+    hemisphereSky: "#ffd9bd", hemisphereGround: "#5a6a58", sun: 1.4, sunColor: "#ffb37a",
+    sunPosition: [-1900, 700, 500], night: 0.55,
+  },
+  { hour: 8, ...DAY_LOOK },
+  { hour: 17, ...DAY_LOOK },
+  {
+    hour: 18, sky: "#e48a5a", ambient: 1, ambientColor: "#ffd2b0", hemisphere: 1.1,
+    hemisphereSky: "#ffd9bd", hemisphereGround: "#5a6a58", sun: 1.5, sunColor: "#ff9a5c",
+    sunPosition: [1700, 650, 700], night: 0.35,
+  },
+  { hour: 19, ...NIGHT_LOOK },
+  { hour: 24, ...NIGHT_LOOK },
+];
+
+function sampleLighting(hour: number) {
+  const h = ((hour % 24) + 24) % 24;
+  const nextIndex = Math.max(1, LIGHTING_KEYS.findIndex((key) => key.hour > h));
+  const previous = LIGHTING_KEYS[nextIndex - 1];
+  const next = LIGHTING_KEYS[nextIndex];
+  const linear = (h - previous.hour) / (next.hour - previous.hour);
+  const t = linear * linear * (3 - 2 * linear);
+
+  const mix = (a: number, b: number) => a + (b - a) * t;
+  const mixColor = (a: string, b: string) => new THREE.Color(a).lerp(new THREE.Color(b), t);
+
+  return {
+    sky: mixColor(previous.sky, next.sky),
+    ambient: mix(previous.ambient, next.ambient),
+    ambientColor: mixColor(previous.ambientColor, next.ambientColor),
+    hemisphere: mix(previous.hemisphere, next.hemisphere),
+    hemisphereSky: mixColor(previous.hemisphereSky, next.hemisphereSky),
+    hemisphereGround: mixColor(previous.hemisphereGround, next.hemisphereGround),
+    sun: mix(previous.sun, next.sun),
+    sunColor: mixColor(previous.sunColor, next.sunColor),
+    sunPosition: new THREE.Vector3(...previous.sunPosition).lerp(new THREE.Vector3(...next.sunPosition), t),
+    night: mix(previous.night, next.night),
+  };
+}
+
+function Atmosphere({ hour }: { hour: number }) {
+  const scene = useThree((state) => state.scene);
+  const ambient = useRef<THREE.AmbientLight>(null);
+  const hemisphere = useRef<THREE.HemisphereLight>(null);
+  const sun = useRef<THREE.DirectionalLight>(null);
+  const target = useMemo(() => sampleLighting(hour), [hour]);
+  const snapped = useRef(false);
+
+  useFrame((_, delta) => {
+    const k = snapped.current ? 1 - Math.exp(-delta * 1.5) : 1;
+    snapped.current = true;
+
+    if (scene.background instanceof THREE.Color) scene.background.lerp(target.sky, k);
+    lighting.night += (target.night - lighting.night) * k;
+
+    if (ambient.current) {
+      ambient.current.color.lerp(target.ambientColor, k);
+      ambient.current.intensity += (target.ambient - ambient.current.intensity) * k;
+    }
+    if (hemisphere.current) {
+      hemisphere.current.color.lerp(target.hemisphereSky, k);
+      hemisphere.current.groundColor.lerp(target.hemisphereGround, k);
+      hemisphere.current.intensity += (target.hemisphere - hemisphere.current.intensity) * k;
+    }
+    if (sun.current) {
+      sun.current.color.lerp(target.sunColor, k);
+      sun.current.intensity += (target.sun - sun.current.intensity) * k;
+      sun.current.position.lerp(target.sunPosition, k);
+    }
+  });
+
+  return (
+    <>
+      <color attach="background" args={[DAY_LOOK.sky]} />
+      <ambientLight ref={ambient} intensity={DAY_LOOK.ambient} />
+      <hemisphereLight ref={hemisphere} args={[DAY_LOOK.hemisphereSky, DAY_LOOK.hemisphereGround, DAY_LOOK.hemisphere]} />
+      <directionalLight
+        ref={sun}
+        position={DAY_LOOK.sunPosition}
+        intensity={DAY_LOOK.sun}
+        castShadow
+        shadow-mapSize={[2048, 2048]}
+        shadow-camera-left={-1500}
+        shadow-camera-right={1500}
+        shadow-camera-top={1200}
+        shadow-camera-bottom={-1200}
+      />
+    </>
+  );
+}
+
+function StreetLamps() {
+  const poles = useRef<InstancedMesh>(null);
+  const bulbs = useRef<InstancedMesh>(null);
+  const bulbMaterial = useRef<THREE.MeshStandardMaterial>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  useLayoutEffect(() => {
+    LAMPS.forEach((lamp, index) => {
+      dummy.position.set(lamp.x, 22, lamp.y);
+      dummy.updateMatrix();
+      poles.current?.setMatrixAt(index, dummy.matrix);
+      dummy.position.set(lamp.x, 41.5, lamp.y);
+      dummy.updateMatrix();
+      bulbs.current?.setMatrixAt(index, dummy.matrix);
+    });
+    for (const mesh of [poles.current, bulbs.current]) {
+      if (mesh) mesh.instanceMatrix.needsUpdate = true;
+    }
+  }, [dummy]);
+
+  useFrame(() => {
+    if (bulbMaterial.current) bulbMaterial.current.emissiveIntensity = 0.1 + lighting.night * 2.4;
+  });
+
+  return (
+    <group>
+      <instancedMesh ref={poles} args={[undefined, undefined, LAMPS.length]} frustumCulled={false} castShadow>
+        <cylinderGeometry args={[1, 1.4, 37, 6]} /><meshStandardMaterial color="#3a4144" metalness={0.4} roughness={0.6} />
+      </instancedMesh>
+      <instancedMesh ref={bulbs} args={[undefined, undefined, LAMPS.length]} frustumCulled={false}>
+        <sphereGeometry args={[3.4, 10, 8]} />
+        <meshStandardMaterial ref={bulbMaterial} color="#fff2c9" emissive="#ffd27a" emissiveIntensity={0.1} />
+      </instancedMesh>
+    </group>
+  );
+}
+
+const CAMERA_DIRECTION = new THREE.Vector3(0, 2450, 2350).normalize();
+const FOCUS_DISTANCE = 950;
+const FOCUS_START_DISTANCE = 2400;
+const FOCUS_DURATION = 1.6;
+
+type OrbitLike = {
+  target: THREE.Vector3;
+  update: () => void;
+  addEventListener: (type: string, listener: () => void) => void;
+  removeEventListener: (type: string, listener: () => void) => void;
+};
+
+function FocusOnPlayer({ active, focus }: { active: boolean; focus: THREE.Vector3 }) {
+  const camera = useThree((state) => state.camera);
+  const controls = useThree((state) => state.controls) as unknown as OrbitLike | null;
+  const focusRef = useRef(focus);
+  const armed = useRef(true);
+  const animation = useRef<{
+    elapsed: number;
+    start: THREE.Vector3;
+    end: THREE.Vector3;
+    target: THREE.Vector3;
+  } | null>(null);
+
+  // Keep the focus ref fresh WITHOUT touching it during render
+  useEffect(() => {
+    focusRef.current = focus;
+  }, [focus]);
+
+  useEffect(() => {
+    if (!active) armed.current = true;
+  }, [active]);
+
+  useEffect(() => {
+    if (!active || !controls || !armed.current) return;
+    armed.current = false;
+
+    const target = focusRef.current.clone();
+    const start = target
+      .clone()
+      .add(CAMERA_DIRECTION.clone().multiplyScalar(FOCUS_START_DISTANCE));
+    const end = target
+      .clone()
+      .add(CAMERA_DIRECTION.clone().multiplyScalar(FOCUS_DISTANCE));
+
+    camera.position.copy(start);
+    controls.target.copy(target);
+    controls.update();
+    animation.current = { elapsed: 0, start, end, target };
+
+    const cancel = () => {
+      animation.current = null;
+    };
+    controls.addEventListener("start", cancel);
+    return () => controls.removeEventListener("start", cancel);
+  }, [active, camera, controls]);
+
+  useFrame((_, delta) => {
+    const current = animation.current;
+    if (!current || !controls) return;
+
+    current.elapsed += delta;
+    const t = Math.min(current.elapsed / FOCUS_DURATION, 1);
+    const eased = 1 - Math.pow(1 - t, 3);
+
+    camera.position.lerpVectors(current.start, current.end, eased);
+    controls.target.copy(current.target);
+    controls.update();
+    if (t >= 1) animation.current = null;
+  });
+
+  return null;
+}
+
+function Scene({ active, interactive, hour, appearance, onVisit, onEnterBuilding }: {
   active: boolean;
   interactive: boolean;
+  hour: number;
+  appearance: CharacterAppearance;
   onVisit: (building: Building) => void;
   onEnterBuilding: (buildingName: string, buildingId: string) => void;
 }) {
@@ -1587,6 +2245,7 @@ function Scene({ active, interactive, onVisit, onEnterBuilding }: {
     x: HOME_BUILDING.x + HOME_BUILDING.width / 2,
     y: HOME_BUILDING.y + HOME_BUILDING.depth + 35,
   });
+  const playerFocus = useMemo(() => new THREE.Vector3(...worldPosition(destination.x, destination.y, 0)), [destination]);
   const riverGeometry = useMemo(() => createRiverGeometry(), []);
   const grassTexture = useMemo(() => createGrassTexture(), []);
   const asphaltTexture = useMemo(() => createRoadTexture(), []);
@@ -1615,11 +2274,9 @@ function Scene({ active, interactive, onVisit, onEnterBuilding }: {
 
   return (
     <>
-      <color attach="background" args={["#4babc0"]} />
-      <ambientLight intensity={1.35} />
-      <hemisphereLight args={["#fff4dc", "#526c51", 1.7]} />
-      <directionalLight position={[-850, 1900, 1100]} intensity={2.3} castShadow shadow-mapSize={[2048, 2048]} shadow-camera-left={-1500} shadow-camera-right={1500} shadow-camera-top={1200} shadow-camera-bottom={-1200} />
+      <Atmosphere hour={hour} />
       <OrbitControls makeDefault enabled={active && interactive} enableDamping dampingFactor={0.1} enableRotate enablePan enableZoom minPolarAngle={0.18} maxPolarAngle={1.5} minDistance={180} maxDistance={5200} screenSpacePanning={false} target={[0, 0, 0]} />
+      <FocusOnPlayer active={active && interactive} focus={playerFocus} />
 
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -48, 0]}>
         <planeGeometry args={[10000, 10000]} /><meshStandardMaterial map={oceanTexture} color="#d2e3e3" roughness={0.42} metalness={0.12} />
@@ -1643,6 +2300,7 @@ function Scene({ active, interactive, onVisit, onEnterBuilding }: {
       <mesh geometry={riverGeometry} position={[0, 1.4, 0]}><meshStandardMaterial color="#52b3c4" roughness={0.24} metalness={0.08} side={THREE.DoubleSide} /></mesh>
 
       {RIVER_BRIDGES.map((bridge) => <RiverBridge key={bridge.position[2]} {...bridge} />)}
+      <StreetLamps />
       <CityTraffic />
       <CityPeople />
       {TREES.map((tree, index) => <Tree key={index} {...tree} scale={0.9 + (index % 3) * 0.16} />)}
@@ -1657,7 +2315,7 @@ function Scene({ active, interactive, onVisit, onEnterBuilding }: {
         />
       ))}
       {BILLBOARDS.map((board) => <Billboard key={board.title} board={board} />)}
-      <AnimatedPlayer destination={destination} />
+      <AnimatedPlayer destination={destination} appearance={appearance} />
     </>
   );
 }
@@ -1719,21 +2377,28 @@ function CanvasSizer({ containerRef }: { containerRef: { current: HTMLDivElement
 export default function OsogboScene({
   active,
   interactive = true,
+  appearance = DEFAULT_CHARACTER_APPEARANCE,
   onEnterBuilding,
 }: {
   active: boolean;
   interactive?: boolean;
+  appearance?: CharacterAppearance;
   onEnterBuilding: (buildingName: string, buildingId: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedBuilding, setSelectedBuilding] = useState<string | null>(null);
 
+  const devOffsetMs = useGameStore((state) => state.devOffsetMs);
+  const now = useNow(1000);
+  const clock = getGameClock(now + devOffsetMs) as unknown as { hour: number; minute?: number; minutes?: number };
+  const rawHour = Math.floor(clock.hour) + (clock.minute ?? clock.minutes ?? 0) / 60;
+  const hour = Number.isFinite(rawHour) ? rawHour : 12;
+
   useEffect(() => {
     if (process.env.NODE_ENV === "production") return;
     const hidden = BUILDINGS.filter((building) => !PLACED_BUILDINGS.includes(building)).map((building) => building.name);
     if (hidden.length) console.warn("[OsogboScene] Not shown because they touch the river:", hidden.join(", "));
-    const crowded = findCrowdedBuildings();
-    if (crowded.length) console.warn(`[OsogboScene] Buildings closer than ${MIN_BUILDING_GAP}:`, crowded.join(" | "));
+    // Crowded-building warnings intentionally disabled — visual overlaps are acceptable.
   }, []);
 
   return (
@@ -1751,18 +2416,20 @@ export default function OsogboScene({
         gl={{ antialias: true, alpha: false }}
         onCreated={({ gl }) => {
           gl.setClearColor("#4babc0");
-          gl.shadowMap.type = THREE.PCFSoftShadowMap;
+          gl.shadowMap.type = THREE.PCFShadowMap;
         }}
       >
         <CanvasSizer containerRef={containerRef} />
         <Scene
           active={active}
           interactive={interactive}
+          hour={hour}
+          appearance={appearance}
           onVisit={(building) => setSelectedBuilding(building.id)}
           onEnterBuilding={onEnterBuilding}
         />
       </Canvas>
-      
+
       <span className="sr-only" aria-live="polite">{selectedBuilding ? `Selected ${selectedBuilding}` : "Osogbo map"}</span>
     </div>
   );

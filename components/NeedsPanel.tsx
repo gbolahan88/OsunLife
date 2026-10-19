@@ -1,16 +1,24 @@
-
 "use client";
 
 import { motion } from "framer-motion";
 import { NEED_KEYS, NEED_META, type Needs } from "@/lib/needs";
+import {
+  CharacterAppearance,
+  DEFAULT_CHARACTER_APPEARANCE,
+  buildAvatarHeadshotUrl,
+} from "@/store/characterAppearance";
 
 export default function NeedsPanel({
   needs,
+  appearance = DEFAULT_CHARACTER_APPEARANCE,
   onProfileClick,
 }: {
   needs: Needs;
+  appearance?: CharacterAppearance;
   onProfileClick: () => void;
 }) {
+  const headshotUrl = buildAvatarHeadshotUrl(appearance, 128);
+
   return (
     <section
       aria-label="Needs"
@@ -23,9 +31,19 @@ export default function NeedsPanel({
           onClick={onProfileClick}
           aria-label="Open player profile, needs, goals, skills and settings"
           title="Player profile"
-          className="pointer-events-auto flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-[3px] border-white bg-[#20b978] text-2xl shadow-[0_5px_18px_rgba(20,60,43,0.25)] ring-1 ring-[#20b978] transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#168e5b] active:scale-95"
+          className="pointer-events-auto relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full border-[3px] border-white bg-[#20b978] shadow-[0_5px_18px_rgba(20,60,43,0.25)] ring-1 ring-[#20b978] transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#168e5b] active:scale-95"
         >
-          👨‍🦱
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={headshotUrl}
+            alt="Your character"
+            className="h-full w-full object-cover"
+            style={{
+              objectPosition: "50% 12%",
+              transform: "scale(1.5) translateY(6%)",
+            }}
+            draggable={false}
+          />
         </button>
 
         {/* Existing needs indicators */}

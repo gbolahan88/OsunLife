@@ -1,0 +1,2 @@
+"Low Poly Female Base Character" (https://skfb.ly/pILuR) by b000f is licensed under Creative Commons Attribution (http://creativecommons.org/licenses/by/4.0/).
+"Stylized Cute Girl Character - Low Poly Ready" (https://skfb.ly/pHE9W) by Asim-ali is licensed under Creative Commons Attribution (http://creativecommons.org/licenses/by/4.0/).

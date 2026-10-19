@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Hud from "./Hud";
 import BottomNav, { type Tab } from "./BottomNav";
 import DayNightOverlay from "./DayNightOverlay";
 import NeedsPanel from "./NeedsPanel";
 import HomeInterior from "./HomeInterior";
+import BuildingInterior from "./game/BuildingInterior";
 import PlayerProfilePopup from "@/components/PlayerProfilePopup";
 import FurnitureShop from "@/components/game/FurnitureShop";
 import MapTasks from "@/components/game/MapTasks";
@@ -23,13 +24,42 @@ import {
   getDayPhase,
   getGameClock,
 } from "@/lib/time";
+import {
+  CharacterAppearance,
+  DEFAULT_CHARACTER_APPEARANCE,
+} from "@/store/characterAppearance";
+
+const APPEARANCE_KEY_PREFIX = "osun-life:appearance";
+
+function loadAppearance(username: string): CharacterAppearance {
+  if (typeof window === "undefined") return DEFAULT_CHARACTER_APPEARANCE;
+  try {
+    const stored = window.localStorage.getItem(
+      `${APPEARANCE_KEY_PREFIX}:${username}`
+    );
+    if (!stored) return DEFAULT_CHARACTER_APPEARANCE;
+    return { ...DEFAULT_CHARACTER_APPEARANCE, ...JSON.parse(stored) };
+  } catch {
+    return DEFAULT_CHARACTER_APPEARANCE;
+  }
+}
 
 export default function GameApp({ username }: { username: string }) {
   const [tab, setTab] = useState<Tab>("map");
   const [lastBuilding, setLastBuilding] = useState("Tobi's House");
+  const [lastBuildingId, setLastBuildingId] = useState("home");
   const [loadedUsername, setLoadedUsername] = useState<string | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isRentOpen, setIsRentOpen] = useState(false);
+
+  // ✅ Lazy init: reads localStorage ONCE at mount — no setState in effect needed
+  const [appearance, setAppearance] = useState<CharacterAppearance>(() =>
+    loadAppearance(username)
+  );
+
+  // Track which username's appearance we've loaded so a username change
+  // (rare, but possible on logout/login) triggers a reload
+  const lastAppearanceUsername = useRef<string>(username);
 
   const cash = useGameStore((s) => s.cash);
   const needs = useGameStore((s) => s.needs);
@@ -49,19 +79,55 @@ export default function GameApp({ username }: { username: string }) {
   const now = useNow(1000);
   const ready = loadedUsername === username;
 
-  // Each account gets its own save; hydration starts from a fresh-player state.
+  // Hydrate the game save (unchanged)
   useEffect(() => {
     let active = true;
-    useGameStore.persist.setOptions({ name: `${SAVE_KEY_PREFIX}:${username}` });
+
+    useGameStore.persist.setOptions({
+      name: `${SAVE_KEY_PREFIX}:${username}`,
+    });
+
     void Promise.resolve(useGameStore.persist.rehydrate())
-      .catch((error: unknown) => console.error("[GameApp] Save hydration failed:", error))
+      .catch((error: unknown) =>
+        console.error("[GameApp] Save hydration failed:", error)
+      )
       .finally(() => {
         if (active) setLoadedUsername(username);
       });
+
     return () => {
       active = false;
     };
   }, [username]);
+
+  // If the username changes mid-session, reload appearance from the new user's key.
+  // (This uses setState in an effect, but ONLY when a real change happens —
+  //  not on every render — and it's a rare event, so it won't cause cascading renders.)
+  useEffect(() => {
+    if (lastAppearanceUsername.current === username) return;
+    lastAppearanceUsername.current = username;
+    setAppearance(loadAppearance(username));
+  }, [username]);
+
+  // Save appearance to localStorage whenever it changes
+  useEffect(() => {
+    if (!ready) return;
+    try {
+      window.localStorage.setItem(
+        `${APPEARANCE_KEY_PREFIX}:${username}`,
+        JSON.stringify(appearance)
+      );
+    } catch (error) {
+      console.error("[GameApp] Failed to save appearance:", error);
+    }
+  }, [appearance, username, ready]);
+
+  const handleUpdateAppearance = (
+    key: keyof CharacterAppearance,
+    value: string
+  ) => {
+    setAppearance((prev) => ({ ...prev, [key]: value }));
+  };
 
   useGameLoop(ready);
 
@@ -73,7 +139,7 @@ export default function GameApp({ username }: { username: string }) {
 
   if (!ready) {
     return (
-      <div className="flex h-dvh items-center justify-center text-sm text-9xl font-bold text-[var(--accent)]">
+      <div className="flex h-dvh items-center justify-center text-sm font-bold text-[var(--accent)]">
         Osun Life…
       </div>
     );
@@ -99,20 +165,30 @@ export default function GameApp({ username }: { username: string }) {
 
         <OsogboWorld
           active={tab === "map"}
+          appearance={appearance}
           onEnterBuilding={(buildingName, buildingId) => {
-            const task = MAP_TASKS.find((entry) => entry.targetBuildingId === buildingId);
+            const task = MAP_TASKS.find(
+              (entry) => entry.targetBuildingId === buildingId
+            );
+
             if (task) {
               const result = completeMapTask(task.id, Date.now());
-              setTaskNotice(result.ok
-                ? `${task.title}: +${formatNaira(task.reward)}`
-                : result.reason);
+              setTaskNotice(
+                result.ok
+                  ? `${task.title}: +${formatNaira(task.reward)}`
+                  : result.reason
+              );
             }
+
             setLastBuilding(buildingName);
+            setLastBuildingId(buildingId);
             setTab("home");
           }}
         />
 
-        {tab === "map" && <MapTasks completedTasks={completedTasks} now={now} />}
+        {tab === "map" && (
+          <MapTasks completedTasks={completedTasks} now={now} />
+        )}
 
         {tab === "buy" && (
           <FurnitureShop
@@ -121,21 +197,34 @@ export default function GameApp({ username }: { username: string }) {
             furniture={furniture}
             onBuy={buyFurniture}
             onFindHome={() => setIsRentOpen(true)}
+            onClose={() => setTab("map")}
           />
         )}
 
-        {tab === "home" && (
-          <HomeInterior
-            buildingName={lastBuilding}
-            housing={housing}
-            furniture={furniture}
-            loan={loan}
-            cash={cash}
-            onExit={() => setTab("map")}
-            onFindHome={() => setIsRentOpen(true)}
-            onRepayLoan={repayLoan}
-          />
-        )}
+        {tab === "home" &&
+          (lastBuildingId === "home" || lastBuildingId === "okefia") && (
+            <HomeInterior
+              buildingName={lastBuilding}
+              housing={housing}
+              furniture={furniture}
+              loan={loan}
+              cash={cash}
+              onExit={() => setTab("map")}
+              onFindHome={() => setIsRentOpen(true)}
+              onRepayLoan={repayLoan}
+            />
+          )}
+
+        {tab === "home" &&
+          lastBuildingId !== "home" &&
+          lastBuildingId !== "okefia" && (
+            <BuildingInterior
+              key={lastBuildingId}
+              buildingId={lastBuildingId}
+              buildingName={lastBuilding}
+              onExit={() => setTab("map")}
+            />
+          )}
 
         {(housing === "undecided" || isRentOpen) && (
           <RentPopup
@@ -147,6 +236,7 @@ export default function GameApp({ username }: { username: string }) {
               if (result.ok) {
                 setIsRentOpen(false);
                 setLastBuilding("Your home");
+                setLastBuildingId("home");
                 setTab("home");
               }
               return result;
@@ -155,6 +245,7 @@ export default function GameApp({ username }: { username: string }) {
               sleepRough();
               setIsRentOpen(false);
               setLastBuilding("Under the Okefia Flyover");
+              setLastBuildingId("okefia");
               setTab("home");
             }}
             onClose={() => setIsRentOpen(false)}
@@ -163,6 +254,7 @@ export default function GameApp({ username }: { username: string }) {
 
         <NeedsPanel
           needs={needs}
+          appearance={appearance}
           onProfileClick={() => setIsProfileOpen(true)}
         />
 
@@ -171,14 +263,26 @@ export default function GameApp({ username }: { username: string }) {
             username={username}
             cash={cash}
             needs={needs}
+            appearance={appearance}
+            onUpdateAppearance={handleUpdateAppearance}
             onClose={() => setIsProfileOpen(false)}
           />
         )}
 
         {taskNotice && (
-          <div role="status" className="absolute left-1/2 top-24 z-50 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-3 rounded-full border border-white/80 bg-white/95 px-4 py-2.5 text-xs font-bold text-[#26724f] shadow-lg">
+          <div
+            role="status"
+            className="absolute left-1/2 top-24 z-50 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-3 rounded-full border border-white/80 bg-white/95 px-4 py-2.5 text-xs font-bold text-[#26724f] shadow-lg"
+          >
             <span className="truncate">{taskNotice}</span>
-            <button type="button" onClick={() => setTaskNotice(null)} aria-label="Dismiss notice" className="shrink-0 text-[#718276]">×</button>
+            <button
+              type="button"
+              onClick={() => setTaskNotice(null)}
+              aria-label="Dismiss notice"
+              className="shrink-0 text-[#718276]"
+            >
+              ×
+            </button>
           </div>
         )}
 
