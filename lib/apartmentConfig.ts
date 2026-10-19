@@ -127,18 +127,20 @@ function withGrid(
 /* 2-bedroom flat                                                              */
 /* -------------------------------------------------------------------------- */
 
-const TWO_BEDROOM_ROOMS: ApartmentRoom[] = [
-  { id: "living-room", name: "Living room", kind: "living", x: -8, z: 0, width: 9, depth: 6, floorLight: "#f4f0e5", floorDark: "#ded9cd" },
-  { id: "bedroom-1", name: "Bedroom 1", kind: "bedroom", x: -8, z: -2, width: 4, depth: 2, floorLight: "#c59c6e", floorDark: "#a77d55" },
-  { id: "bedroom-2", name: "Bedroom 2", kind: "bedroom", x: -4, z: -2, width: 4, depth: 2, floorLight: "#c59c6e", floorDark: "#a77d55" },
-  { id: "kitchen", name: "Kitchen", kind: "kitchen", x: 0, z: -2, width: 8, depth: 2, floorLight: "#ecebe5", floorDark: "#d5d6d0" },
-  { id: "corridor-living", name: "Corridor", kind: "corridor", x: 1, z: 0, width: 2, depth: 6, floorLight: "#f4f0e5", floorDark: "#ded9cd" },
-  { id: "corridor-middle", name: "Corridor", kind: "corridor", x: 3, z: 0, width: 3, depth: 1.5, floorLight: "#f4f0e5", floorDark: "#ded9cd" },
-  { id: "corridor-right", name: "Corridor", kind: "corridor", x: 6, z: 0, width: 2, depth: 6, floorLight: "#f4f0e5", floorDark: "#ded9cd" },
-  { id: "bathroom", name: "Bathroom", kind: "bathroom", x: 3, z: 1.5, width: 3, depth: 3, floorLight: "#cbdde0", floorDark: "#b4cbd0" },
-  { id: "utility", name: "Utility", kind: "utility", x: 3, z: 4.5, width: 3, depth: 1.5, floorLight: "#c7834d", floorDark: "#a96339" },
-  { id: "balcony", name: "Balcony", kind: "balcony", x: 8, z: -2, width: 3, depth: 8, floorLight: "#cfcfc7" },
-].map((room) => withGrid(room, LARGER_APARTMENT_MIN_GRID_ROWS));
+const TWO_BEDROOM_ROOMS: ApartmentRoom[] = (
+  [
+    { id: "living-room", name: "Living room", kind: "living", x: -8, z: 0, width: 9, depth: 6, floorLight: "#f4f0e5", floorDark: "#ded9cd" },
+    { id: "bedroom-1", name: "Bedroom 1", kind: "bedroom", x: -8, z: -2, width: 4, depth: 2, floorLight: "#c59c6e", floorDark: "#a77d55" },
+    { id: "bedroom-2", name: "Bedroom 2", kind: "bedroom", x: -4, z: -2, width: 4, depth: 2, floorLight: "#c59c6e", floorDark: "#a77d55" },
+    { id: "kitchen", name: "Kitchen", kind: "kitchen", x: 0, z: -2, width: 8, depth: 2, floorLight: "#ecebe5", floorDark: "#d5d6d0" },
+    { id: "corridor-living", name: "Corridor", kind: "corridor", x: 1, z: 0, width: 2, depth: 6, floorLight: "#f4f0e5", floorDark: "#ded9cd" },
+    { id: "corridor-middle", name: "Corridor", kind: "corridor", x: 3, z: 0, width: 3, depth: 1.5, floorLight: "#f4f0e5", floorDark: "#ded9cd" },
+    { id: "corridor-right", name: "Corridor", kind: "corridor", x: 6, z: 0, width: 2, depth: 6, floorLight: "#f4f0e5", floorDark: "#ded9cd" },
+    { id: "bathroom", name: "Bathroom", kind: "bathroom", x: 3, z: 1.5, width: 3, depth: 3, floorLight: "#cbdde0", floorDark: "#b4cbd0" },
+    { id: "utility", name: "Utility", kind: "utility", x: 3, z: 4.5, width: 3, depth: 1.5, floorLight: "#c7834d", floorDark: "#a96339" },
+    { id: "balcony", name: "Balcony", kind: "balcony", x: 8, z: -2, width: 3, depth: 8, floorLight: "#cfcfc7" },
+  ] satisfies ApartmentRoom[]
+).map((room) => withGrid(room, LARGER_APARTMENT_MIN_GRID_ROWS));
 
 const TWO_BEDROOM_WALLS: ApartmentWall[] = [
   { id: "back", start: [-8, -2], end: [8, -2], height: WALL_H, thickness: WALL_T },
@@ -190,11 +192,13 @@ const TWO_BEDROOM_LAYOUT: ApartmentLayout = {
 /* Room & parlour self-con                                                     */
 /* -------------------------------------------------------------------------- */
 
-const ROOM_PARLOUR_ROOMS: ApartmentRoom[] = [
-  { id: "parlour", name: "Parlour", kind: "living", x: -4.2, z: -1, width: 6, depth: 4.8, floorLight: "#f4f0e5", floorDark: "#ded9cd" },
-  { id: "bedroom", name: "Bedroom", kind: "bedroom", x: 1.8, z: -1, width: 3.6, depth: 3, floorLight: "#c59c6e", floorDark: "#a77d55" },
-  { id: "bathroom", name: "Bathroom", kind: "bathroom", x: 1.8, z: 2, width: 3.6, depth: 1.8, floorLight: "#cbdde0", floorDark: "#b4cbd0" },
-].map((room) => withGrid(room, LARGER_APARTMENT_MIN_GRID_ROWS));
+const ROOM_PARLOUR_ROOMS: ApartmentRoom[] = (
+  [
+    { id: "parlour", name: "Parlour", kind: "living", x: -4.2, z: -1, width: 6, depth: 4.8, floorLight: "#f4f0e5", floorDark: "#ded9cd" },
+    { id: "bedroom", name: "Bedroom", kind: "bedroom", x: 1.8, z: -1, width: 3.6, depth: 3, floorLight: "#c59c6e", floorDark: "#a77d55" },
+    { id: "bathroom", name: "Bathroom", kind: "bathroom", x: 1.8, z: 2, width: 3.6, depth: 1.8, floorLight: "#cbdde0", floorDark: "#b4cbd0" },
+  ] satisfies ApartmentRoom[]
+).map((room) => withGrid(room, LARGER_APARTMENT_MIN_GRID_ROWS));
 
 const ROOM_PARLOUR_WALLS: ApartmentWall[] = [
   { id: "back", start: [-4.2, -1], end: [5.4, -1], height: WALL_H, thickness: WALL_T },
@@ -225,11 +229,13 @@ const ROOM_PARLOUR_LAYOUT: ApartmentLayout = {
 /* Self-con                                                                    */
 /* -------------------------------------------------------------------------- */
 
-const SELF_CON_ROOMS: ApartmentRoom[] = [
-  { id: "studio", name: "Self-con room", kind: "studio", x: -3, z: -1, width: 6, depth: 4.2, floorLight: "#f1ece0", floorDark: "#dbd4c4" },
-  { id: "bathroom", name: "Bathroom", kind: "bathroom", x: 3, z: -1, width: 2.4, depth: 2.4, floorLight: "#cbdde0", floorDark: "#b4cbd0" },
-  { id: "kitchenette", name: "Kitchenette", kind: "kitchen", x: 3, z: 1.4, width: 2.4, depth: 1.8, floorLight: "#ecebe5", floorDark: "#d5d6d0" },
-].map((room) => withGrid(room, SELF_CON_MIN_GRID_ROWS));
+const SELF_CON_ROOMS: ApartmentRoom[] = (
+  [
+    { id: "studio", name: "Self-con room", kind: "studio", x: -3, z: -1, width: 6, depth: 4.2, floorLight: "#f1ece0", floorDark: "#dbd4c4" },
+    { id: "bathroom", name: "Bathroom", kind: "bathroom", x: 3, z: -1, width: 2.4, depth: 2.4, floorLight: "#cbdde0", floorDark: "#b4cbd0" },
+    { id: "kitchenette", name: "Kitchenette", kind: "kitchen", x: 3, z: 1.4, width: 2.4, depth: 1.8, floorLight: "#ecebe5", floorDark: "#d5d6d0" },
+  ] satisfies ApartmentRoom[]
+).map((room) => withGrid(room, SELF_CON_MIN_GRID_ROWS));
 
 const SELF_CON_WALLS: ApartmentWall[] = [
   { id: "back", start: [-3, -1], end: [5.4, -1], height: WALL_H, thickness: WALL_T },
