@@ -53,6 +53,36 @@ export type ApartmentOpening = {
   paneRows?: number;
 };
 
+/* -------------------------------------------------------------------------- */
+/* Stairs                                                                      */
+/* -------------------------------------------------------------------------- */
+
+export type StairDirection = "east" | "west" | "north" | "south";
+
+export type ApartmentStairs = {
+  id: string;
+  /** World-space X of the stairs' minimum corner. */
+  x: number;
+  /** World-space Z of the stairs' minimum corner. */
+  z: number;
+  /** Total run length of the flight (along its direction). */
+  length: number;
+  /** Width of the flight. */
+  width: number;
+  /** Number of treads. */
+  steps: number;
+  /** Height gained per step. */
+  rise: number;
+  /** Which way the flight climbs. */
+  direction: StairDirection;
+  /** Whether to draw a handrail. Defaults to true in the renderer. */
+  rail?: boolean;
+  /** Which side of the flight the rail sits on: 1 or -1. */
+  railSide?: 1 | -1;
+};
+
+/* -------------------------------------------------------------------------- */
+
 export type ApartmentFloorBounds = {
   id: string;
   name: string;
@@ -76,6 +106,8 @@ export type ApartmentLayout = {
   openings: ApartmentOpening[];
   floorBounds: ApartmentFloorBounds[];
   camera: ApartmentCamera;
+  /** Optional stairs — only the two-bedroom layout has any today. */
+  stairs?: ApartmentStairs[];
 };
 
 export const APARTMENT_SIZE = {
@@ -443,6 +475,27 @@ const TWO_BEDROOM_OPENINGS: ApartmentOpening[] = [
   { wallId: "upstairs-right", position: 3.5, width: 1.5, height: 1.4, sillHeight: 0.8, type: "window", paneColumns: 2, paneRows: 2 },
 ];
 
+/**
+ * Staircase for the two-bedroom layout. The staircase room is
+ * `x: -2, z: 4.5, width: 4, depth: 3.5`. The flight runs east → west
+ * along the room, climbing from ground floor (y = 0) to the upstairs
+ * bedroom floor (y = WALL_H = 3).
+ */
+const TWO_BEDROOM_STAIRS: ApartmentStairs[] = [
+  {
+    id: "main-stair",
+    x: -2,
+    z: 4.5,
+    length: 4,
+    width: 1.4,
+    steps: 15,
+    rise: WALL_H / 15, // 0.2 per step → 3.0 total
+    direction: "west",
+    rail: true,
+    railSide: 1,
+  },
+];
+
 const TWO_BEDROOM_LAYOUT: ApartmentLayout = {
   id: "two-bedroom",
   name: "Two-bedroom apartment",
@@ -451,6 +504,7 @@ const TWO_BEDROOM_LAYOUT: ApartmentLayout = {
   openings: TWO_BEDROOM_OPENINGS,
   floorBounds: boundsOf(TWO_BEDROOM_ROOMS),
   camera: { target: [0, 0, 4], zoom: 24 },
+  stairs: TWO_BEDROOM_STAIRS,
 };
 
 /* -------------------------------------------------------------------------- */
