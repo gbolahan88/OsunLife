@@ -23,6 +23,8 @@ export type ApartmentRoom = {
   floorLight: string;
   floorDark?: string;
   tileSize?: number;
+  gridRows?: number;
+  gridCols?: number;
 };
 
 export type ApartmentWall = {
@@ -78,6 +80,12 @@ export const APARTMENT_SIZE = {
 };
 
 export const DEFAULT_TILE_SIZE = 0.6;
+
+// Floor grid resolution is independent of the physical furniture scale.
+// Existing room dimensions, walls and furniture footprints remain unchanged.
+export const SELF_CON_MIN_GRID_ROWS = 15;
+export const LARGER_APARTMENT_MIN_GRID_ROWS = 20;
+
 export const APARTMENT_WALL_COLOR = "#e6d7bd";
 export const APARTMENT_SKIRTING_COLOR = "#b69d7b";
 export const APARTMENT_TOP_EDGE_COLOR = "#f4ead8";
@@ -98,8 +106,25 @@ function boundsOf(rooms: ApartmentRoom[]): ApartmentFloorBounds[] {
   }));
 }
 
+function withGrid(
+  room: ApartmentRoom,
+  minimumRows: number,
+): ApartmentRoom {
+  const tileSize = room.tileSize ?? DEFAULT_TILE_SIZE;
+
+  return {
+    ...room,
+    tileSize,
+    gridRows: Math.max(
+      minimumRows,
+      Math.ceil(room.depth / tileSize),
+    ),
+    gridCols: Math.ceil(room.width / tileSize),
+  };
+}
+
 /* -------------------------------------------------------------------------- */
-/* 2-bedroom flat (the original apartment, with the bedroom strip split in two) */
+/* 2-bedroom flat                                                              */
 /* -------------------------------------------------------------------------- */
 
 const TWO_BEDROOM_ROOMS: ApartmentRoom[] = [
@@ -113,7 +138,7 @@ const TWO_BEDROOM_ROOMS: ApartmentRoom[] = [
   { id: "bathroom", name: "Bathroom", kind: "bathroom", x: 3, z: 1.5, width: 3, depth: 3, floorLight: "#cbdde0", floorDark: "#b4cbd0" },
   { id: "utility", name: "Utility", kind: "utility", x: 3, z: 4.5, width: 3, depth: 1.5, floorLight: "#c7834d", floorDark: "#a96339" },
   { id: "balcony", name: "Balcony", kind: "balcony", x: 8, z: -2, width: 3, depth: 8, floorLight: "#cfcfc7" },
-];
+].map((room) => withGrid(room, LARGER_APARTMENT_MIN_GRID_ROWS));
 
 const TWO_BEDROOM_WALLS: ApartmentWall[] = [
   { id: "back", start: [-8, -2], end: [8, -2], height: WALL_H, thickness: WALL_T },
@@ -169,7 +194,7 @@ const ROOM_PARLOUR_ROOMS: ApartmentRoom[] = [
   { id: "parlour", name: "Parlour", kind: "living", x: -4.2, z: -1, width: 6, depth: 4.8, floorLight: "#f4f0e5", floorDark: "#ded9cd" },
   { id: "bedroom", name: "Bedroom", kind: "bedroom", x: 1.8, z: -1, width: 3.6, depth: 3, floorLight: "#c59c6e", floorDark: "#a77d55" },
   { id: "bathroom", name: "Bathroom", kind: "bathroom", x: 1.8, z: 2, width: 3.6, depth: 1.8, floorLight: "#cbdde0", floorDark: "#b4cbd0" },
-];
+].map((room) => withGrid(room, LARGER_APARTMENT_MIN_GRID_ROWS));
 
 const ROOM_PARLOUR_WALLS: ApartmentWall[] = [
   { id: "back", start: [-4.2, -1], end: [5.4, -1], height: WALL_H, thickness: WALL_T },
@@ -204,7 +229,7 @@ const SELF_CON_ROOMS: ApartmentRoom[] = [
   { id: "studio", name: "Self-con room", kind: "studio", x: -3, z: -1, width: 6, depth: 4.2, floorLight: "#f1ece0", floorDark: "#dbd4c4" },
   { id: "bathroom", name: "Bathroom", kind: "bathroom", x: 3, z: -1, width: 2.4, depth: 2.4, floorLight: "#cbdde0", floorDark: "#b4cbd0" },
   { id: "kitchenette", name: "Kitchenette", kind: "kitchen", x: 3, z: 1.4, width: 2.4, depth: 1.8, floorLight: "#ecebe5", floorDark: "#d5d6d0" },
-];
+].map((room) => withGrid(room, SELF_CON_MIN_GRID_ROWS));
 
 const SELF_CON_WALLS: ApartmentWall[] = [
   { id: "back", start: [-3, -1], end: [5.4, -1], height: WALL_H, thickness: WALL_T },

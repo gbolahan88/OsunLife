@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { connection } from "next/server";
 import AuthScreen from "@/components/AuthScreen";
 import GameApp from "@/components/GameApp";
 import { createClient } from "@/lib/supabase";
@@ -7,7 +8,6 @@ import { isUsernameAuthConfigured } from "@/lib/supabase-config";
 
 export default function Page() {
   const configured = isUsernameAuthConfigured();
-
   if (!configured) return <AuthScreen configured={false} />;
 
   return (
@@ -18,6 +18,10 @@ export default function Page() {
 }
 
 async function AuthenticatedGame() {
+  // Tells Next.js this component MUST run at request time (no prerender).
+  // This is the fix for "unstable value Date.now() while prerendering".
+  await connection();
+
   const supabase = await createClient();
   const { data } = await supabase.auth.getClaims();
   const claims = data?.claims;
