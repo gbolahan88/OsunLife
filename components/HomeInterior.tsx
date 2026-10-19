@@ -20,6 +20,10 @@ import {
   type PlacedFurniture,
 } from "@/lib/furniture";
 import { useGameStore } from "@/store/gameStore";
+import {
+  CharacterAppearance,
+  DEFAULT_CHARACTER_APPEARANCE,
+} from "@/store/characterAppearance";
 
 type HomeInteriorProps = {
   buildingName: string;
@@ -27,6 +31,7 @@ type HomeInteriorProps = {
   furniture: PlacedFurniture[];
   loan: number;
   cash: number;
+  appearance?: CharacterAppearance;
   onExit: () => void;
   onFindHome: () => void;
   onRepayLoan: () => void;
@@ -38,6 +43,7 @@ export default function HomeInterior({
   furniture,
   loan,
   cash,
+  appearance = DEFAULT_CHARACTER_APPEARANCE,
   onExit,
   onFindHome,
   onRepayLoan,
@@ -112,7 +118,11 @@ export default function HomeInterior({
         }
       >
         {layout ? (
-          <Apartment layout={layout} furniture={furniture} />
+          <Apartment
+            layout={layout}
+            furniture={furniture}
+            appearance={appearance}
+          />
         ) : (
           <BridgeShelter />
         )}

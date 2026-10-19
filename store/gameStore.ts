@@ -30,7 +30,7 @@ import { MAP_TASKS, MAP_TASK_COOLDOWN_MS } from "@/lib/mapTasks";
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const MAX_CATCH_UP_MINUTES = 8 * 60;
-const STARTING_CASH = 5000;
+const STARTING_CASH = 50000000;
 
 /**
  * Customisable appearance for the player's 3D character.
