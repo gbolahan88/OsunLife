@@ -1,11 +1,13 @@
+
 "use client";
 
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
+import { OrbitControls, SoftShadows } from "@react-three/drei";
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 import {
   APARTMENT_GLASS_COLOR,
+  APARTMENT_PLATFORM_COLOR,
   APARTMENT_SKIRTING_COLOR,
   APARTMENT_TOP_EDGE_COLOR,
   APARTMENT_WALL_COLOR,
@@ -13,7 +15,9 @@ import {
   type ApartmentLayout,
   type ApartmentOpening,
   type ApartmentRoom,
+  type ApartmentStairs,
   type ApartmentWall,
+  type StairDirection,
 } from "@/lib/apartmentConfig";
 import {
   FURNITURE_BY_ID,
@@ -22,9 +26,33 @@ import {
   type FurnitureItem,
   type PlacedFurniture,
 } from "@/lib/furniture";
+import CharacterModel from "@/components/game/CharacterModel";
+import {
+  CharacterAppearance,
+  DEFAULT_CHARACTER_APPEARANCE,
+} from "@/store/characterAppearance";
 
-const SKY_COLOR = "#b8d8e8";
 const FLOOR_Y = 0.015;
+
+type RoomWithElevation = ApartmentRoom & {
+  elevation?: number;
+};
+
+type WallWithElevation = ApartmentWall & {
+  elevation?: number;
+};
+
+type LayoutWithStairs = ApartmentLayout & {
+  stairs?: ApartmentStairs[];
+};
+
+function getRoomElevation(room: ApartmentRoom): number {
+  return (room as RoomWithElevation).elevation ?? 0;
+}
+
+function getWallElevation(wall: ApartmentWall): number {
+  return (wall as WallWithElevation).elevation ?? 0;
+}
 
 function useCheckerTexture(room: ApartmentRoom) {
   const texture = useMemo(() => {
@@ -44,9 +72,7 @@ function useCheckerTexture(room: ApartmentRoom) {
     for (let row = 0; row < 2; row += 1) {
       for (let column = 0; column < 2; column += 1) {
         context.fillStyle =
-          (row + column) % 2 === 0
-            ? room.floorLight
-            : room.floorDark;
+          (row + column) % 2 === 0 ? room.floorLight : room.floorDark;
 
         context.fillRect(
           column * squareSize,
@@ -59,9 +85,6 @@ function useCheckerTexture(room: ApartmentRoom) {
 
     const nextTexture = new THREE.CanvasTexture(canvas);
     const tileSize = room.tileSize ?? DEFAULT_TILE_SIZE;
-
-    // Keep visible floor tiles the same physical size in every room.
-    // Placement-grid density can differ independently from floor appearance.
     const visualColumns = room.width / tileSize;
     const visualRows = room.depth / tileSize;
 
@@ -72,35 +95,60 @@ function useCheckerTexture(room: ApartmentRoom) {
     nextTexture.anisotropy = 4;
 
     return nextTexture;
-  }, [room]);
+  }, [
+    room.floorDark,
+    room.floorLight,
+    room.tileSize,
+    room.width,
+    room.depth,
+  ]);
 
-  useEffect(() => () => texture?.dispose(), [texture]);
+  useEffect(() => {
+    return () => texture?.dispose();
+  }, [texture]);
 
   return texture;
 }
 
 function RoomFloor({ room }: { room: ApartmentRoom }) {
   const texture = useCheckerTexture(room);
+  const elevation = getRoomElevation(room);
   const centerX = room.x + room.width / 2;
   const centerZ = room.z + room.depth / 2;
 
   return (
-    <mesh
-      position={[centerX, FLOOR_Y, centerZ]}
-      rotation={[-Math.PI / 2, 0, 0]}
-      receiveShadow
-    >
-      <planeGeometry args={[room.width, room.depth]} />
-
-      {texture ? (
-        <meshStandardMaterial map={texture} roughness={0.92} />
-      ) : (
-        <meshStandardMaterial
-          color={room.floorLight}
-          roughness={0.92}
-        />
+    <group>
+      {elevation > 0 && (
+        <mesh
+          position={[centerX, elevation / 2, centerZ]}
+          castShadow
+          receiveShadow
+        >
+          <boxGeometry args={[room.width, elevation, room.depth]} />
+          <meshStandardMaterial
+            color={APARTMENT_PLATFORM_COLOR}
+            roughness={0.9}
+          />
+        </mesh>
       )}
-    </mesh>
+
+      <mesh
+        position={[centerX, FLOOR_Y + elevation, centerZ]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        receiveShadow
+      >
+        <planeGeometry args={[room.width, room.depth]} />
+
+        {texture ? (
+          <meshStandardMaterial map={texture} roughness={0.92} />
+        ) : (
+          <meshStandardMaterial
+            color={room.floorLight}
+            roughness={0.92}
+          />
+        )}
+      </mesh>
+    </group>
   );
 }
 
@@ -141,7 +189,9 @@ function WallBox({
   thickness: number;
   style: ApartmentWall["style"];
 }) {
-  if (width <= 0 || height <= 0) return null;
+  if (width <= 0 || height <= 0 || thickness <= 0) {
+    return null;
+  }
 
   return (
     <mesh position={[x, y, 0]} castShadow receiveShadow>
@@ -159,8 +209,8 @@ function OpeningGlass({
   thickness: number;
 }) {
   const sill = opening.sillHeight ?? 0;
-  const paneColumns = opening.paneColumns ?? 1;
-  const paneRows = opening.paneRows ?? 1;
+  const paneColumns = Math.max(1, opening.paneColumns ?? 1);
+  const paneRows = Math.max(1, opening.paneRows ?? 1);
   const glassZ = thickness / 2 + 0.012;
 
   const archGeometry = useMemo(() => {
@@ -179,12 +229,16 @@ function OpeningGlass({
     return new THREE.ShapeGeometry(shape, 20);
   }, [opening.height, opening.type, opening.width]);
 
-  useEffect(() => () => archGeometry?.dispose(), [archGeometry]);
+  useEffect(() => {
+    return () => archGeometry?.dispose();
+  }, [archGeometry]);
 
   if (opening.type === "arch") {
+    if (!archGeometry) return null;
+
     return (
       <mesh
-        geometry={archGeometry!}
+        geometry={archGeometry}
         position={[opening.position, sill, glassZ]}
       >
         <meshStandardMaterial
@@ -203,8 +257,8 @@ function OpeningGlass({
       <mesh position={[0, opening.height / 2, 0]}>
         <boxGeometry
           args={[
-            opening.width - 0.08,
-            opening.height - 0.08,
+            Math.max(0, opening.width - 0.08),
+            Math.max(0, opening.height - 0.08),
             0.025,
           ]}
         />
@@ -267,13 +321,17 @@ function OpeningFrame({
   if (opening.type === "door") {
     return (
       <group
-        position={[opening.position, 0, thickness / 2 + 0.035]}
+        position={[
+          opening.position,
+          0,
+          thickness / 2 + 0.035,
+        ]}
       >
         <mesh position={[0, opening.height / 2, 0]} castShadow>
           <boxGeometry
             args={[
-              opening.width - 0.09,
-              opening.height - 0.05,
+              Math.max(0.05, opening.width - 0.09),
+              Math.max(0.05, opening.height - 0.05),
               0.07,
             ]}
           />
@@ -348,7 +406,13 @@ function OpeningFrame({
         thickness / 2 + 0.03,
       ]}
     >
-      <mesh position={[-opening.width / 2, opening.height / 2, 0]}>
+      <mesh
+        position={[
+          -opening.width / 2,
+          opening.height / 2,
+          0,
+        ]}
+      >
         <boxGeometry
           args={[0.07, opening.height, thickness + 0.06]}
         />
@@ -358,7 +422,13 @@ function OpeningFrame({
         />
       </mesh>
 
-      <mesh position={[opening.width / 2, opening.height / 2, 0]}>
+      <mesh
+        position={[
+          opening.width / 2,
+          opening.height / 2,
+          0,
+        ]}
+      >
         <boxGeometry
           args={[0.07, opening.height, thickness + 0.06]}
         />
@@ -482,13 +552,16 @@ function ApartmentWallView({
 
   const rotation = -Math.atan2(dz, dx);
   const style = wall.style ?? "wall";
+  const baseY = getWallElevation(wall);
+
+  if (length <= 0) return null;
 
   if (style === "railing") {
     return (
       <group
         position={[
           (wall.start[0] + wall.end[0]) / 2,
-          0,
+          baseY,
           (wall.start[1] + wall.end[1]) / 2,
         ]}
         rotation={[0, rotation, 0]}
@@ -530,23 +603,24 @@ function ApartmentWallView({
     <group
       position={[
         (wall.start[0] + wall.end[0]) / 2,
-        0,
+        baseY,
         (wall.start[1] + wall.end[1]) / 2,
       ]}
       rotation={[0, rotation, 0]}
     >
       {edges.slice(0, -1).map((start, index) => {
         const end = edges[index + 1];
+        const width = end - start;
+
+        if (width <= 0) return null;
+
         const midpoint = (start + end) / 2;
 
         const opening = openings.find(
           (item) =>
-            Math.abs(midpoint - item.position) <
-            item.width / 2,
+            midpoint >= item.position - item.width / 2 &&
+            midpoint <= item.position + item.width / 2,
         );
-
-        const left = start - centerOffset;
-        const width = end - start;
 
         const segmentOpeningTop =
           opening?.type === "arch"
@@ -570,21 +644,31 @@ function ApartmentWallView({
 
         const holeBottom =
           opening &&
-          (opening.type === "door" ||
-            opening.type === "open")
+          (opening.type === "door" || opening.type === "open")
             ? 0
             : opening?.sillHeight ?? 0;
 
         const hasFloorOpening =
-          opening &&
-          (opening.type === "door" ||
-            opening.type === "open");
+          opening?.type === "door" ||
+          opening?.type === "open";
+
+        const safeOpeningTop = Math.min(
+          wall.height,
+          Math.max(0, segmentOpeningTop),
+        );
+
+        const safeHoleBottom = Math.min(
+          safeOpeningTop,
+          Math.max(0, holeBottom),
+        );
+
+        const localX = start - centerOffset + width / 2;
 
         return (
           <group key={`${wall.id}-${index}`}>
             {!opening ? (
               <WallBox
-                x={left + width / 2}
+                x={localX}
                 y={wall.height / 2}
                 width={width}
                 height={wall.height}
@@ -594,19 +678,22 @@ function ApartmentWallView({
             ) : (
               <>
                 <WallBox
-                  x={left + width / 2}
-                  y={holeBottom / 2}
+                  x={localX}
+                  y={safeHoleBottom / 2}
                   width={width}
-                  height={holeBottom}
+                  height={safeHoleBottom}
                   thickness={wall.thickness}
                   style={style}
                 />
 
                 <WallBox
-                  x={left + width / 2}
-                  y={(segmentOpeningTop + wall.height) / 2}
+                  x={localX}
+                  y={(safeOpeningTop + wall.height) / 2}
                   width={width}
-                  height={wall.height - segmentOpeningTop}
+                  height={Math.max(
+                    0,
+                    wall.height - safeOpeningTop,
+                  )}
                   thickness={wall.thickness}
                   style={style}
                 />
@@ -616,12 +703,14 @@ function ApartmentWallView({
             {!hasFloorOpening && (
               <mesh
                 position={[
-                  left + width / 2,
+                  localX,
                   0.07,
                   wall.thickness / 2 + 0.015,
                 ]}
               >
-                <boxGeometry args={[width, 0.14, 0.04]} />
+                <boxGeometry
+                  args={[width, 0.14, 0.04]}
+                />
                 <meshStandardMaterial
                   color={APARTMENT_SKIRTING_COLOR}
                   roughness={0.82}
@@ -640,7 +729,11 @@ function ApartmentWallView({
         ]}
       >
         <boxGeometry
-          args={[length, 0.05, wall.thickness + 0.035]}
+          args={[
+            length,
+            0.05,
+            wall.thickness + 0.035,
+          ]}
         />
         <meshStandardMaterial
           color={APARTMENT_TOP_EDGE_COLOR}
@@ -649,7 +742,9 @@ function ApartmentWallView({
       </mesh>
 
       {openings.map((opening) => (
-        <group key={`${wall.id}-${opening.position}`}>
+        <group
+          key={`${wall.id}-${opening.position}`}
+        >
           {opening.type === "window" ||
           opening.type === "arch" ? (
             <OpeningGlass
@@ -670,6 +765,125 @@ function ApartmentWallView({
           />
         </group>
       ))}
+    </group>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Stairs                                                                      */
+/* -------------------------------------------------------------------------- */
+
+const STAIR_ROTATION: Record<StairDirection, number> = {
+  east: 0,
+  west: Math.PI,
+  north: Math.PI / 2,
+  south: -Math.PI / 2,
+};
+
+function StairsView({ stairs }: { stairs: ApartmentStairs }) {
+  const {
+    length,
+    width,
+    steps: requestedSteps,
+    rise,
+    direction,
+  } = stairs;
+
+  const steps = Math.max(1, Math.floor(requestedSteps));
+  const safeLength = Math.max(0.1, length);
+  const safeWidth = Math.max(0.1, width);
+  const safeRise = Math.max(0.01, rise);
+
+  const rail = stairs.rail ?? true;
+  const railSide = stairs.railSide ?? 1;
+
+  const horizontal =
+    direction === "east" || direction === "west";
+
+  const centerX =
+    stairs.x + (horizontal ? safeLength : safeWidth) / 2;
+
+  const centerZ =
+    stairs.z + (horizontal ? safeWidth : safeLength) / 2;
+
+  const treadRun = safeLength / steps;
+  const railRise = 0.9;
+
+  const firstX = -safeLength / 2 + treadRun / 2;
+  const lastX = safeLength / 2 - treadRun / 2;
+  const railDx = lastX - firstX;
+  const railDy = (steps - 1) * safeRise;
+  const railLength = Math.hypot(railDx, railDy);
+  const railAngle = Math.atan2(railDy, railDx);
+  const railCenterY =
+    (safeRise + steps * safeRise) / 2 + railRise;
+
+  const railZ = railSide * (safeWidth / 2 - 0.05);
+
+  return (
+    <group
+      position={[centerX, FLOOR_Y, centerZ]}
+      rotation={[0, STAIR_ROTATION[direction], 0]}
+    >
+      {Array.from({ length: steps }, (_, index) => {
+        const height = (index + 1) * safeRise;
+
+        return (
+          <B
+            key={`step-${index}`}
+            p={[
+              -safeLength / 2 + (index + 0.5) * treadRun,
+              height / 2,
+              0,
+            ]}
+            s={[treadRun, height, safeWidth]}
+            c={index % 2 === 0 ? "#9a6a45" : "#8a5a3a"}
+            rough={0.85}
+          />
+        );
+      })}
+
+      {rail && (
+        <>
+          {Array.from({ length: steps }, (_, index) => {
+            if (index % 2 !== 0 && index !== steps - 1) {
+              return null;
+            }
+
+            const stepTop = (index + 1) * safeRise;
+
+            return (
+              <B
+                key={`post-${index}`}
+                p={[
+                  -safeLength / 2 +
+                    (index + 0.5) * treadRun,
+                  stepTop + railRise / 2,
+                  railZ,
+                ]}
+                s={[0.04, railRise, 0.04]}
+                c="#2b2018"
+              />
+            );
+          })}
+
+          {railLength > 0 && (
+            <mesh
+              position={[0, railCenterY, railZ]}
+              rotation={[0, 0, railAngle]}
+              castShadow
+            >
+              <boxGeometry
+                args={[railLength, 0.05, 0.05]}
+              />
+              <meshStandardMaterial
+                color="#2b2018"
+                roughness={0.6}
+              />
+            </mesh>
+          )}
+        </>
+      )}
     </group>
   );
 }
@@ -734,7 +948,6 @@ function Cyl({
   );
 }
 
-// Every model is drawn facing +z, centred on its footprint (W x D metres).
 function FurnitureModel({
   item,
   W,
@@ -900,14 +1113,22 @@ function FurnitureModel({
     case "tv":
       return (
         <>
-          <B p={[0, 0.25, 0]} s={[W, 0.5, D * 0.9]} c="#5a3b28" />
+          <B
+            p={[0, 0.25, 0]}
+            s={[W, 0.5, D * 0.9]}
+            c="#5a3b28"
+          />
           <B
             p={[0, 0.95, 0]}
             s={[W * 0.8, 0.8, 0.07]}
             c="#15181a"
             emissive="#203848"
           />
-          <B p={[0, 0.54, 0]} s={[0.3, 0.08, 0.2]} c="#2a2d30" />
+          <B
+            p={[0, 0.54, 0]}
+            s={[0.3, 0.08, 0.2]}
+            c="#2a2d30"
+          />
         </>
       );
 
@@ -1000,7 +1221,11 @@ function FurnitureModel({
             [-1, 1].map((z) => (
               <Cyl
                 key={`${x}${z}`}
-                p={[x * W * 0.2, 0.9, z * D * 0.2]}
+                p={[
+                  x * W * 0.2,
+                  0.9,
+                  z * D * 0.2,
+                ]}
                 r={0.07}
                 h={0.04}
                 c="#8b8f91"
@@ -1057,7 +1282,11 @@ function FurnitureModel({
             s={[W * 0.7, 0.12, D * 0.6]}
             c="#2b2e30"
           />
-          <B p={[0, 0.06, 0]} s={[W, 0.1, D]} c="#3a3d40" />
+          <B
+            p={[0, 0.06, 0]}
+            s={[W, 0.1, D]}
+            c="#3a3d40"
+          />
           <B
             p={[W * 0.25, 0.4, D * 0.46 + 0.01]}
             s={[0.12, 0.12, 0.02]}
@@ -1092,7 +1321,12 @@ function FurnitureModel({
             s={[W * 0.7, 1, D * 0.7]}
             c="#dfe7ea"
           />
-          <Cyl p={[0, 1.2, 0]} r={0.16} h={0.4} c="#6fb4e0" />
+          <Cyl
+            p={[0, 1.2, 0]}
+            r={0.16}
+            h={0.4}
+            c="#6fb4e0"
+          />
           <B
             p={[0, 0.7, D * 0.35 + 0.01]}
             s={[0.16, 0.06, 0.02]}
@@ -1104,7 +1338,12 @@ function FurnitureModel({
     case "plant":
       return (
         <>
-          <Cyl p={[0, 0.17, 0]} r={0.17} h={0.34} c="#b4673c" />
+          <Cyl
+            p={[0, 0.17, 0]}
+            r={0.17}
+            h={0.34}
+            c="#b4673c"
+          />
           <mesh position={[0, 0.58, 0]} castShadow>
             <icosahedronGeometry args={[0.28, 1]} />
             <meshStandardMaterial
@@ -1117,7 +1356,11 @@ function FurnitureModel({
 
     default:
       return (
-        <B p={[0, 0.3, 0]} s={[W, 0.6, D]} c="#999999" />
+        <B
+          p={[0, 0.3, 0]}
+          s={[W, 0.6, D]}
+          c="#999999"
+        />
       );
   }
 }
@@ -1141,31 +1384,39 @@ function FurnitureLayer({
 
         const tile = room.tileSize ?? DEFAULT_TILE_SIZE;
         const { cols, rows } = roomTiles(room);
-
         const cellWidth = room.width / cols;
         const cellDepth = room.depth / rows;
-
         const size = footprint(item, entry.rotated);
         const physicalWidth = size.w * tile;
         const physicalDepth = size.d * tile;
 
         const x =
-          room.x + entry.col * cellWidth + physicalWidth / 2;
+          room.x +
+          entry.col * cellWidth +
+          physicalWidth / 2;
+
         const z =
-          room.z + entry.row * cellDepth + physicalDepth / 2;
+          room.z +
+          entry.row * cellDepth +
+          physicalDepth / 2;
 
         const margin = item.flat ? 0.04 : 0.08;
+        const y = FLOOR_Y + getRoomElevation(room);
 
         return (
           <group
             key={entry.uid}
-            position={[x, FLOOR_Y, z]}
-            rotation={[0, entry.rotated ? Math.PI / 2 : 0, 0]}
+            position={[x, y, z]}
+            rotation={[
+              0,
+              entry.rotated ? Math.PI / 2 : 0,
+              0,
+            ]}
           >
             <FurnitureModel
               item={item}
-              W={item.w * tile - margin}
-              D={item.d * tile - margin}
+              W={Math.max(0.05, item.w * tile - margin)}
+              D={Math.max(0.05, item.d * tile - margin)}
             />
           </group>
         );
@@ -1174,8 +1425,6 @@ function FurnitureLayer({
   );
 }
 
-/* -------------------------------------------------------------------------- */
-
 function ApartmentShell({
   layout,
   furniture,
@@ -1183,10 +1432,15 @@ function ApartmentShell({
   layout: ApartmentLayout;
   furniture: PlacedFurniture[];
 }) {
+  const stairs = (layout as LayoutWithStairs).stairs;
+
   return (
     <group>
       {layout.rooms.map((room, index) => (
-        <RoomFloor key={`${room.id}-${index}`} room={room} />
+        <RoomFloor
+          key={`${room.id}-${index}`}
+          room={room}
+        />
       ))}
 
       {layout.walls.map((wall) => (
@@ -1197,7 +1451,41 @@ function ApartmentShell({
         />
       ))}
 
-      <FurnitureLayer layout={layout} furniture={furniture} />
+      {stairs?.map((stair) => (
+        <StairsView key={stair.id} stairs={stair} />
+      ))}
+
+      <FurnitureLayer
+        layout={layout}
+        furniture={furniture}
+      />
+    </group>
+  );
+}
+
+function PlayerCharacter({
+  layout,
+  appearance,
+}: {
+  layout: ApartmentLayout;
+  appearance: CharacterAppearance;
+}) {
+  const firstRoom = layout.rooms[0];
+  if (!firstRoom) return null;
+
+  const x = firstRoom.x + firstRoom.width * 0.25;
+  const z = firstRoom.z + firstRoom.depth * 0.8;
+  const y = FLOOR_Y + getRoomElevation(firstRoom);
+
+  return (
+    <group
+      position={[x, y, z]}
+      rotation={[0, Math.PI, 0]}
+    >
+      <CharacterModel
+        appearance={appearance}
+        targetHeight={1.8}
+      />
     </group>
   );
 }
@@ -1205,18 +1493,20 @@ function ApartmentShell({
 export default function Apartment({
   layout,
   furniture = [],
+  appearance = DEFAULT_CHARACTER_APPEARANCE,
   controlsEnabled = true,
 }: {
   layout: ApartmentLayout;
   furniture?: PlacedFurniture[];
+  appearance?: CharacterAppearance;
   controlsEnabled?: boolean;
 }) {
   const { target, zoom } = layout.camera;
 
   const cameraPosition: [number, number, number] = [
-    target[0] + 13.5,
-    18,
-    target[2] + 17.5,
+    target[0] + 12,
+    16,
+    target[2] + 14,
   ];
 
   return (
@@ -1236,30 +1526,54 @@ export default function Apartment({
         alpha: false,
       }}
     >
-      <color attach="background" args={[SKY_COLOR]} />
+      <color
+        attach="background"
+        args={["#e8ded0"]}
+      />
 
-      <ambientLight intensity={1.3} />
+      <ambientLight
+        intensity={1.1}
+        color="#ffe8ce"
+      />
 
-      <hemisphereLight args={["#fff6e7", "#718378", 1.25]} />
+      <hemisphereLight
+        args={["#fff6e7", "#a0816b", 1.0]}
+      />
 
       <directionalLight
         position={[
-          target[0] - 10.5,
-          16,
-          target[2] + 9.5,
+          target[0] - 10,
+          20,
+          target[2] + 12,
         ]}
-        intensity={2.1}
+        intensity={2.2}
+        color="#fff0db"
         castShadow
-        shadow-mapSize={[1024, 1024]}
-        shadow-camera-left={-14}
-        shadow-camera-right={14}
-        shadow-camera-top={14}
-        shadow-camera-bottom={-14}
+        shadow-mapSize={[2048, 2048]}
+        shadow-camera-left={-16}
+        shadow-camera-right={16}
+        shadow-camera-top={16}
+        shadow-camera-bottom={-16}
         shadow-camera-near={1}
         shadow-camera-far={60}
+        shadow-bias={-0.0001}
       />
 
-      <ApartmentShell layout={layout} furniture={furniture} />
+      <SoftShadows
+        size={25}
+        samples={16}
+        focus={0.5}
+      />
+
+      <ApartmentShell
+        layout={layout}
+        furniture={furniture}
+      />
+
+      <PlayerCharacter
+        layout={layout}
+        appearance={appearance}
+      />
 
       <OrbitControls
         makeDefault
@@ -1267,10 +1581,10 @@ export default function Apartment({
         enableRotate={controlsEnabled}
         enableZoom={controlsEnabled}
         enablePan={false}
-        minZoom={zoom * 0.6}
-        maxZoom={zoom * 1.5}
+        minZoom={zoom * 0.8}
+        maxZoom={zoom * 1.2}
         minPolarAngle={0.45}
-        maxPolarAngle={1.42}
+        maxPolarAngle={1.35}
         target={target}
       />
     </Canvas>
