@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Home, ShoppingBag, X } from "lucide-react";
+import { Check, Home, ShoppingBag, X, Trash2 } from "lucide-react";
 import { getApartmentLayout } from "@/lib/apartmentConfig";
 import { formatNaira } from "@/lib/format";
 import {
@@ -19,6 +19,7 @@ type FurnitureShopProps = {
   housing: HousingStatus;
   furniture: PlacedFurniture[];
   onBuy: (itemId: string) => ActionResult;
+  onSell: (uid: string) => ActionResult;
   onFindHome: () => void;
   onClose: () => void;
 };
@@ -28,6 +29,7 @@ export default function FurnitureShop({
   housing,
   furniture,
   onBuy,
+  onSell,
   onFindHome,
   onClose,
 }: FurnitureShopProps) {
@@ -44,7 +46,7 @@ export default function FurnitureShop({
 
   return (
     <div
-      className="absolute inset-0 z-30 flex items-center justify-center bg-black/35 p-3 pb-24 pt-24 backdrop-blur-sm sm:p-6"
+      className="pointer-events-auto absolute inset-0 z-40 flex items-end justify-center bg-black/40 p-3 pb-24 pt-24 backdrop-blur-sm sm:items-center sm:p-6"
       onClick={(event) => {
         if (event.target === event.currentTarget) {
           onClose();
@@ -57,7 +59,6 @@ export default function FurnitureShop({
         aria-labelledby="furniture-shop-title"
         className="flex max-h-full min-h-0 w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-white/70 bg-[#f2f5ef]/95 shadow-[0_20px_70px_rgba(0,0,0,0.3)] backdrop-blur-xl sm:rounded-3xl"
       >
-        {/* Shop header */}
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[#dce7d9] bg-white/80 px-4 py-3 sm:px-6 sm:py-4">
           <div className="flex min-w-0 items-center gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#dff1e4] text-[#26724f] sm:h-11 sm:w-11">
@@ -94,7 +95,6 @@ export default function FurnitureShop({
           </div>
         </header>
 
-        {/* Scrollable shop content */}
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 sm:px-5 sm:py-4">
           {!layout ? (
             <section className="flex min-h-52 flex-col items-center justify-center py-8 text-center">
@@ -120,7 +120,6 @@ export default function FurnitureShop({
             </section>
           ) : (
             <>
-              {/* Current home */}
               <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-[#dce7d9] bg-white/70 px-3 py-2.5">
                 <span className="min-w-0 truncate text-xs font-semibold text-[#52675a]">
                   <Home size={14} className="mr-1.5 inline" />
@@ -133,7 +132,6 @@ export default function FurnitureShop({
                 </span>
               </div>
 
-              {/* Furniture categories */}
               <div
                 className="mb-4 flex gap-2 overflow-x-auto pb-1"
                 role="tablist"
@@ -160,15 +158,14 @@ export default function FurnitureShop({
                 ))}
               </div>
 
-              {/* Furniture list */}
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 {items.map((item) => {
                   const spot = findSpot(layout, furniture, item);
                   const affordable = cash >= item.price;
 
-                  const placedCount = furniture.filter(
+                  const placedItems = furniture.filter(
                     (placed) => placed.itemId === item.id,
-                  ).length;
+                  );
 
                   return (
                     <article
@@ -188,7 +185,7 @@ export default function FurnitureShop({
                         </h2>
 
                         <p className="mt-0.5 text-[10px] text-[#718276] sm:text-[11px]">
-                          {item.w} × {item.d} tiles · {placedCount} placed
+                          {item.w} × {item.d} tiles · {placedItems.length} placed
                         </p>
 
                         <p className="mt-1 text-xs font-extrabold tabular-nums text-[#26724f]">
@@ -196,32 +193,53 @@ export default function FurnitureShop({
                         </p>
                       </div>
 
-                      <button
-                        type="button"
-                        disabled={!spot || !affordable}
-                        onClick={() => {
-                          const result = onBuy(item.id);
+                      <div className="flex shrink-0 flex-col gap-1.5">
+                        <button
+                          type="button"
+                          disabled={!spot || !affordable}
+                          onClick={() => {
+                            const result = onBuy(item.id);
+                            setFeedback(
+                              result.ok
+                                ? `${item.name} placed in ${spot?.roomId}.`
+                                : result.reason,
+                            );
+                          }}
+                          className="flex min-h-9 items-center justify-center rounded-full bg-[#202838] px-3 text-[11px] font-bold text-white transition-colors hover:bg-[#34465b] disabled:cursor-not-allowed disabled:bg-[#d8e1d8] disabled:text-[#7a877d] sm:min-h-10 sm:px-3.5 sm:text-xs"
+                        >
+                          {spot && affordable
+                            ? "Buy"
+                            : !spot
+                              ? "No space"
+                              : "Too costly"}
+                        </button>
 
-                          setFeedback(
-                            result.ok
-                              ? `${item.name} placed in ${spot?.roomId}.`
-                              : result.reason,
-                          );
-                        }}
-                        className="flex min-h-9 shrink-0 items-center justify-center rounded-full bg-[#202838] px-3 text-[11px] font-bold text-white transition-colors hover:bg-[#34465b] disabled:cursor-not-allowed disabled:bg-[#d8e1d8] disabled:text-[#7a877d] sm:min-h-10 sm:px-3.5 sm:text-xs"
-                      >
-                        {spot && affordable
-                          ? "Buy"
-                          : !spot
-                            ? "No space"
-                            : "Too costly"}
-                      </button>
+                        {/* ✅ SELL BUTTON */}
+                        {placedItems.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const target = placedItems[0];
+                              const result = onSell(target.uid);
+                              setFeedback(
+                                result.ok
+                                  ? `Sold ${item.name} for 90% refund.`
+                                  : result.reason,
+                              );
+                            }}
+                            className="flex min-h-8 items-center justify-center gap-1 rounded-full border border-[#f0d2cd] bg-[#fff4f2] px-3 text-[10px] font-bold text-[#b44235] transition-colors hover:bg-[#fde8e4]"
+                            aria-label={`Sell one ${item.name}`}
+                          >
+                            <Trash2 size={11} />
+                            Sell · {formatNaira(Math.floor(item.price * 0.9))}
+                          </button>
+                        )}
+                      </div>
                     </article>
                   );
                 })}
               </div>
 
-              {/* Purchase feedback */}
               {feedback && (
                 <p
                   role="status"
@@ -235,7 +253,6 @@ export default function FurnitureShop({
           )}
         </div>
 
-        {/* Footer */}
         <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-[#dce7d9] bg-white/80 px-4 py-3 sm:px-5">
           <p className="text-[10px] text-[#718276] sm:text-xs">
             Make your home feel like yours.
