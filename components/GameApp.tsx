@@ -51,14 +51,12 @@ export default function GameApp({ username }: { username: string }) {
   const [loadedUsername, setLoadedUsername] = useState<string | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isRentOpen, setIsRentOpen] = useState(false);
+  const [isShopOpen, setIsShopOpen] = useState(false);
 
-  // ✅ Lazy init: reads localStorage ONCE at mount — no setState in effect needed
   const [appearance, setAppearance] = useState<CharacterAppearance>(() =>
     loadAppearance(username)
   );
 
-  // Track which username's appearance we've loaded so a username change
-  // (rare, but possible on logout/login) triggers a reload
   const lastAppearanceUsername = useRef<string>(username);
 
   const cash = useGameStore((s) => s.cash);
@@ -72,6 +70,7 @@ export default function GameApp({ username }: { username: string }) {
   const rentHome = useGameStore((s) => s.rentHome);
   const sleepRough = useGameStore((s) => s.sleepRough);
   const buyFurniture = useGameStore((s) => s.buyFurniture);
+  const sellFurniture = useGameStore((s) => s.sellFurniture); // ✅ Added
   const completeMapTask = useGameStore((s) => s.completeMapTask);
   const repayLoan = useGameStore((s) => s.repayLoan);
   const [taskNotice, setTaskNotice] = useState<string | null>(null);
@@ -79,7 +78,6 @@ export default function GameApp({ username }: { username: string }) {
   const now = useNow(1000);
   const ready = loadedUsername === username;
 
-  // Hydrate the game save (unchanged)
   useEffect(() => {
     let active = true;
 
@@ -100,16 +98,12 @@ export default function GameApp({ username }: { username: string }) {
     };
   }, [username]);
 
-  // If the username changes mid-session, reload appearance from the new user's key.
-  // (This uses setState in an effect, but ONLY when a real change happens —
-  //  not on every render — and it's a rare event, so it won't cause cascading renders.)
   useEffect(() => {
     if (lastAppearanceUsername.current === username) return;
     lastAppearanceUsername.current = username;
     setAppearance(loadAppearance(username));
   }, [username]);
 
-  // Save appearance to localStorage whenever it changes
   useEffect(() => {
     if (!ready) return;
     try {
@@ -136,6 +130,18 @@ export default function GameApp({ username }: { username: string }) {
     const timeout = window.setTimeout(() => setTaskNotice(null), 4000);
     return () => window.clearTimeout(timeout);
   }, [taskNotice]);
+
+  function handleTabChange(newTab: Tab) {
+    if (newTab === "buy") {
+      if (tab === "home") {
+        setIsShopOpen(true);
+        return;
+      }
+      setTab("buy");
+      return;
+    }
+    setTab(newTab);
+  }
 
   if (!ready) {
     return (
@@ -196,6 +202,7 @@ export default function GameApp({ username }: { username: string }) {
             housing={housing}
             furniture={furniture}
             onBuy={buyFurniture}
+            onSell={sellFurniture}
             onFindHome={() => setIsRentOpen(true)}
             onClose={() => setTab("map")}
           />
@@ -209,6 +216,8 @@ export default function GameApp({ username }: { username: string }) {
               furniture={furniture}
               loan={loan}
               cash={cash}
+              appearance={appearance}
+              isNight={phase === "night"}
               onExit={() => setTab("map")}
               onFindHome={() => setIsRentOpen(true)}
               onRepayLoan={repayLoan}
@@ -225,6 +234,21 @@ export default function GameApp({ username }: { username: string }) {
               onExit={() => setTab("map")}
             />
           )}
+
+        {isShopOpen && (
+          <FurnitureShop
+            cash={cash}
+            housing={housing}
+            furniture={furniture}
+            onBuy={buyFurniture}
+            onSell={sellFurniture}
+            onFindHome={() => {
+              setIsShopOpen(false);
+              setIsRentOpen(true);
+            }}
+            onClose={() => setIsShopOpen(false)}
+          />
+        )}
 
         {(housing === "undecided" || isRentOpen) && (
           <RentPopup
@@ -294,7 +318,7 @@ export default function GameApp({ username }: { username: string }) {
           />
         )}
 
-        <BottomNav active={tab} onChange={setTab} />
+        <BottomNav active={tab} onChange={handleTabChange} />
       </div>
     </div>
   );
