@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Hud from "./Hud";
 import BottomNav, { type Tab } from "./BottomNav";
 import DayNightOverlay from "./DayNightOverlay";
@@ -19,11 +19,7 @@ import { useGameLoop } from "@/hooks/useGameLoop";
 import { useNow } from "@/hooks/useNow";
 import { getMood } from "@/lib/needs";
 import OsogboWorld from "@/components/OsogboWorld";
-import {
-  formatClock,
-  getDayPhase,
-  getGameClock,
-} from "@/lib/time";
+import { formatClock, getDayPhase, getGameClock } from "@/lib/time";
 import {
   CharacterAppearance,
   DEFAULT_CHARACTER_APPEARANCE,
@@ -52,7 +48,7 @@ export default function GameApp({ username }: { username: string }) {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isRentOpen, setIsRentOpen] = useState(false);
   const [isShopOpen, setIsShopOpen] = useState(false);
-
+  const [isEditingFurniture, setIsEditingFurniture] = useState(false);
   const [appearance, setAppearance] = useState<CharacterAppearance>(() =>
     loadAppearance(username)
   );
@@ -70,7 +66,7 @@ export default function GameApp({ username }: { username: string }) {
   const rentHome = useGameStore((s) => s.rentHome);
   const sleepRough = useGameStore((s) => s.sleepRough);
   const buyFurniture = useGameStore((s) => s.buyFurniture);
-  const sellFurniture = useGameStore((s) => s.sellFurniture); // ✅ Added
+  const sellFurniture = useGameStore((s) => s.sellFurniture);
   const completeMapTask = useGameStore((s) => s.completeMapTask);
   const repayLoan = useGameStore((s) => s.repayLoan);
   const [taskNotice, setTaskNotice] = useState<string | null>(null);
@@ -80,11 +76,9 @@ export default function GameApp({ username }: { username: string }) {
 
   useEffect(() => {
     let active = true;
-
     useGameStore.persist.setOptions({
       name: `${SAVE_KEY_PREFIX}:${username}`,
     });
-
     void Promise.resolve(useGameStore.persist.rehydrate())
       .catch((error: unknown) =>
         console.error("[GameApp] Save hydration failed:", error)
@@ -92,7 +86,6 @@ export default function GameApp({ username }: { username: string }) {
       .finally(() => {
         if (active) setLoadedUsername(username);
       });
-
     return () => {
       active = false;
     };
@@ -123,6 +116,11 @@ export default function GameApp({ username }: { username: string }) {
     setAppearance((prev) => ({ ...prev, [key]: value }));
   };
 
+  // ✅ Stable callback — never fires during render
+  const handleEditingChange = useCallback((editing: boolean) => {
+    setIsEditingFurniture(editing);
+  }, []);
+
   useGameLoop(ready);
 
   useEffect(() => {
@@ -133,10 +131,8 @@ export default function GameApp({ username }: { username: string }) {
 
   function handleTabChange(newTab: Tab) {
     if (newTab === "buy") {
-      if (tab === "home") {
-        setIsShopOpen(true);
-        return;
-      }
+      // Inside home: internal Buy Mode handles it, do nothing here
+      if (tab === "home") return;
       setTab("buy");
       return;
     }
@@ -169,28 +165,28 @@ export default function GameApp({ username }: { username: string }) {
           username={username}
         />
 
-        <OsogboWorld
-          active={tab === "map"}
-          appearance={appearance}
-          onEnterBuilding={(buildingName, buildingId) => {
-            const task = MAP_TASKS.find(
-              (entry) => entry.targetBuildingId === buildingId
-            );
-
-            if (task) {
-              const result = completeMapTask(task.id, Date.now());
-              setTaskNotice(
-                result.ok
-                  ? `${task.title}: +${formatNaira(task.reward)}`
-                  : result.reason
+        {tab === "map" && (
+          <OsogboWorld
+            active={true}
+            appearance={appearance}
+            onEnterBuilding={(buildingName, buildingId) => {
+              const task = MAP_TASKS.find(
+                (entry) => entry.targetBuildingId === buildingId
               );
-            }
-
-            setLastBuilding(buildingName);
-            setLastBuildingId(buildingId);
-            setTab("home");
-          }}
-        />
+              if (task) {
+                const result = completeMapTask(task.id, Date.now());
+                setTaskNotice(
+                  result.ok
+                    ? `${task.title}: +${formatNaira(task.reward)}`
+                    : result.reason
+                );
+              }
+              setLastBuilding(buildingName);
+              setLastBuildingId(buildingId);
+              setTab("home");
+            }}
+          />
+        )}
 
         {tab === "map" && (
           <MapTasks completedTasks={completedTasks} now={now} />
@@ -211,6 +207,7 @@ export default function GameApp({ username }: { username: string }) {
         {tab === "home" &&
           (lastBuildingId === "home" || lastBuildingId === "okefia") && (
             <HomeInterior
+              key={lastBuildingId}
               buildingName={lastBuilding}
               housing={housing}
               furniture={furniture}
@@ -221,6 +218,7 @@ export default function GameApp({ username }: { username: string }) {
               onExit={() => setTab("map")}
               onFindHome={() => setIsRentOpen(true)}
               onRepayLoan={repayLoan}
+              onEditingChange={handleEditingChange}
             />
           )}
 
@@ -276,11 +274,13 @@ export default function GameApp({ username }: { username: string }) {
           />
         )}
 
-        <NeedsPanel
-          needs={needs}
-          appearance={appearance}
-          onProfileClick={() => setIsProfileOpen(true)}
-        />
+        {!isEditingFurniture && (
+          <NeedsPanel
+            needs={needs}
+            appearance={appearance}
+            onProfileClick={() => setIsProfileOpen(true)}
+          />
+        )}
 
         {isProfileOpen && (
           <PlayerProfilePopup
@@ -318,7 +318,9 @@ export default function GameApp({ username }: { username: string }) {
           />
         )}
 
-        <BottomNav active={tab} onChange={handleTabChange} />
+        {!isEditingFurniture && (
+          <BottomNav active={tab} onChange={handleTabChange} />
+        )}
       </div>
     </div>
   );

@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { getDayPhase, getGameClock } from "@/lib/time";
 import {
-  clamp, INITIAL_NEEDS, NEED_KEYS, NEED_META, NIGHT_ENERGY_MULTIPLIER, type Needs,
+  clamp, INITIAL_NEEDS, NEED_KEYS, NEED_META, NIGHT_ENERGY_MULTIPLIER, type Needs, type NeedKey,
 } from "@/lib/needs";
 import {
   getHousingPlan, isHousingPlanId, LOAN_OFFER, type HousingPlanId, type HousingStatus,
@@ -40,6 +40,88 @@ function createInitialSave(lastTick = 0) {
 
 export type ActionResult = { ok: true } | { ok: false; reason: string };
 
+// ✅ Furniture → which needs it can fill and by how much per use
+export type FurnitureInteraction = {
+  label: string;
+  emoji: string;
+  need: NeedKey;
+  amount: number;
+};
+
+export const FURNITURE_INTERACTIONS: Record<string, FurnitureInteraction[]> = {
+  // Bathroom
+  "bath-wc-toilet": [
+    { label: "Use toilet", emoji: "🚽", need: "bladder", amount: 100 },
+    { label: "Clean toilet", emoji: "🧽", need: "hygiene", amount: 20 },
+  ],
+  "bath-rain-shower": [
+    { label: "Take shower", emoji: "🚿", need: "hygiene", amount: 90 },
+  ],
+  "bath-bathtub": [
+    { label: "Take a bath", emoji: "🛀", need: "hygiene", amount: 100 },
+  ],
+  "bath-jacuzzi": [
+    { label: "Relax in jacuzzi", emoji: "💦", need: "fun", amount: 70 },
+    { label: "Wash up", emoji: "🫧", need: "hygiene", amount: 60 },
+  ],
+  "bath-baby-bath": [
+    { label: "Wash up", emoji: "🛁", need: "hygiene", amount: 30 },
+  ],
+  "bath-bucket-bowl": [
+    { label: "Wash up", emoji: "🪣", need: "hygiene", amount: 25 },
+  ],
+  "bath-water-drum": [
+    { label: "Store water", emoji: "🛢️", need: "hygiene", amount: 15 },
+  ],
+  "bath-washing-machine": [
+    { label: "Do laundry", emoji: "🌀", need: "hygiene", amount: 40 },
+  ],
+  // Sleep
+  "foam-mattress": [
+    { label: "Sleep", emoji: "😴", need: "energy", amount: 70 },
+  ],
+  "double-bed": [
+    { label: "Sleep", emoji: "😴", need: "energy", amount: 100 },
+    { label: "Nap", emoji: "💤", need: "energy", amount: 30 },
+  ],
+  // Kitchen
+  "gas-cooker": [
+    { label: "Cook food", emoji: "🍳", need: "food", amount: 70 },
+  ],
+  "refrigerator": [
+    { label: "Eat a snack", emoji: "🥪", need: "food", amount: 25 },
+  ],
+  "water-dispenser": [
+    { label: "Drink water", emoji: "🥤", need: "hygiene", amount: 10 },
+  ],
+  // Living
+  "sofa": [
+    { label: "Relax on sofa", emoji: "🛋️", need: "energy", amount: 15 },
+    { label: "Hang out", emoji: "🎉", need: "social", amount: 25 },
+  ],
+  "tv-stand": [
+    { label: "Watch TV", emoji: "📺", need: "fun", amount: 40 },
+  ],
+  "dining-set": [
+    { label: "Eat at table", emoji: "🍽️", need: "food", amount: 60 },
+  ],
+  // Utility
+  "utility-washing-machine": [
+    { label: "Do laundry", emoji: "🧺", need: "hygiene", amount: 35 },
+  ],
+  "generator": [
+    { label: "Turn on", emoji: "⚡", need: "fun", amount: 5 },
+  ],
+  "standing-fan": [
+    { label: "Cool down", emoji: "🌀", need: "energy", amount: 10 },
+  ],
+  // Decor
+  "house-plant": [
+    { label: "Water plant", emoji: "🪴", need: "fun", amount: 5 },
+  ],
+  "rug": [],
+};
+
 type GameState = {
   lastTick: number; cash: number; needs: Needs; housing: HousingStatus;
   loan: number; loanTaken: boolean; furniture: PlacedFurniture[];
@@ -56,6 +138,7 @@ type GameState = {
   sellFurniture: (uid: string) => ActionResult;
   moveFurniture: (uid: string, position: FurniturePosition) => ActionResult;
   rotateFurniture: (uid: string) => ActionResult;
+  useFurniture: (uid: string, need: NeedKey, amount: number) => ActionResult; // ✅ NEW
   completeMapTask: (taskId: string, completedAt?: number) => ActionResult;
   repayLoan: () => number;
   devShiftHours: (hours: number) => void;
@@ -172,7 +255,6 @@ export const useGameStore = create<GameState>()(
         return { ok: true };
       },
 
-      // ✅ 4-way rotation: cycles 0 → 1 → 2 → 3 → 0
       rotateFurniture: (uid) => {
         const state = get();
         if (!isHousingPlanId(state.housing)) return { ok: false, reason: "You need a home first." };
@@ -196,6 +278,21 @@ export const useGameStore = create<GameState>()(
             entry.uid === uid ? { ...entry, rotation: nextRotation } : entry
           ),
         });
+        return { ok: true };
+      },
+
+      // ✅ NEW: use furniture to fill a need
+      useFurniture: (uid, need, amount) => {
+        const state = get();
+        const existing = state.furniture.find((entry) => entry.uid === uid);
+        if (!existing) return { ok: false, reason: "Furniture not found." };
+        const current = state.needs[need] ?? 0;
+        if (current >= 100) return { ok: false, reason: "That need is already full." };
+
+        const needs: Needs = { ...state.needs };
+        needs[need] = clamp(current + amount);
+
+        set({ needs });
         return { ok: true };
       },
 
@@ -226,7 +323,7 @@ export const useGameStore = create<GameState>()(
     }),
     {
       name: "osun-life-save-v2",
-      version: 3, // ← bumped to invalidate old saves
+      version: 3,
       storage: createJSONStorage(() => localStorage),
       merge: (persistedState, currentState) => {
         const persisted = persistedState as (Partial<GameState> & { characterAppearance?: Partial<CharacterAppearance> }) | undefined;
