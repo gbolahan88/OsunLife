@@ -2,7 +2,6 @@ import {
   DEFAULT_TILE_SIZE,
   type ApartmentLayout,
   type ApartmentRoom,
-  type ApartmentWall,
   type RoomKind,
 } from "@/lib/apartmentConfig";
 
@@ -54,14 +53,14 @@ export const FURNITURE_CATALOG: FurnitureItem[] = [
   // ── SLEEP ──
   { id: "foam-mattress", name: "Foam mattress", emoji: "🛏️", category: "Sleep", price: 35000, w: 2, d: 3, model: "mattress", kinds: ["bedroom", "studio", "living"] },
   { id: "double-bed", name: "Double bed", emoji: "🛌", category: "Sleep", price: 120000, w: 3, d: 4, model: "bed", kinds: ["bedroom", "studio", "living"] },
-  { id: "wardrobe", name: "Wardrobe", emoji: "🚪", category: "Sleep", price: 85000, w: 3, d: 1, model: "wardrobe", kinds: ["bedroom", "studio", "living"] },
+  { id: "wardrobe", name: "Wardrobe", emoji: "🚪", category: "Sleep", price: 85000, w: 2, d: 1, model: "wardrobe", kinds: ["bedroom", "studio", "living"] },
 
   // ── LIVING ──
-  { id: "sofa", name: "3-seater sofa", emoji: "🛋️", category: "Living", price: 150000, w: 4, d: 2, model: "sofa", kinds: ["living", "studio"] },
+  { id: "sofa", name: "3-seater sofa", emoji: "🛋️", category: "Living", price: 150000, w: 1, d: 2, model: "sofa", kinds: ["living", "studio"] },
   { id: "chair", name: "Office chair", emoji: "💺", category: "Living", price: 50000, w: 1, d: 1, model: "chair", kinds: ["living", "studio"] },
   { id: "centre-table", name: "Centre table", emoji: "🪵", category: "Living", price: 30000, w: 2, d: 1, model: "table", kinds: ["living", "studio"] },
-  { id: "tv-stand", name: "TV and stand", emoji: "📺", category: "Living", price: 180000, w: 3, d: 1, model: "tv", kinds: ["living", "studio", "bedroom"] },
-  { id: "dining-set", name: "Dining set", emoji: "🍽️", category: "Living", price: 110000, w: 3, d: 3, model: "dining", kinds: ["living", "kitchen", "studio"] },
+  { id: "tv-stand", name: "TV and stand", emoji: "📺", category: "Living", price: 180000, w: 1, d: 1, model: "tv", kinds: ["living", "studio", "bedroom"] },
+  { id: "dining-set", name: "Dining set", emoji: "🍽️", category: "Living", price: 110000, w: 1, d: 3, model: "dining", kinds: ["living", "kitchen", "studio"] },
 
   // ── KITCHEN ──
   { id: "gas-cooker", name: "Gas cooker", emoji: "🔥", category: "Kitchen", price: 60000, w: 1, d: 1, model: "cooker", kinds: ["kitchen", "studio", "utility"] },
@@ -84,7 +83,7 @@ export const FURNITURE_CATALOG: FurnitureItem[] = [
   { id: "bath-jacuzzi", name: "Jacuzzi", emoji: "💦", category: "Bathroom", price: 25000000, w: 2, d: 2, model: "jacuzzi", kinds: ["bathroom"], image: "/images/jacuzzi.jpg" },
 
   // ── DECOR ──
-  { id: "rug", name: "Floor rug", emoji: "🟫", category: "Decor", price: 20000, w: 3, d: 2, model: "rug", kinds: ["living", "bedroom", "studio"], flat: true },
+  { id: "rug", name: "Floor rug", emoji: "🟫", category: "Decor", price: 20000, w: 4, d: 3, model: "rug", kinds: ["living", "bedroom", "studio"], flat: true },
   { id: "house-plant", name: "House plant", emoji: "🪴", category: "Decor", price: 8000, w: 1, d: 1, model: "plant", kinds: ["balcony", "living", "studio", "bedroom"] },
 ];
 
@@ -125,54 +124,6 @@ function rectanglesOverlap(a: { col: number; row: number; w: number; d: number }
   return a.col < b.col + b.w && a.col + a.w > b.col && a.row < b.row + b.d && a.row + a.d > b.row;
 }
 
-// ✅ Helper: does any wall intersect this rectangle (in world coordinates)?
-function rectIntersectsWall(
-  rect: { x1: number; z1: number; x2: number; z2: number },
-  wall: ApartmentWall,
-  padding: number,
-): boolean {
-  if (wall.style === "railing") return false;
-  const pad = wall.thickness / 2 + padding;
-  const x1 = rect.x1 - pad;
-  const z1 = rect.z1 - pad;
-  const x2 = rect.x2 + pad;
-  const z2 = rect.z2 + pad;
-
-  const wdx = wall.end[0] - wall.start[0];
-  const wdz = wall.end[1] - wall.start[1];
-  const wlen = Math.hypot(wdx, wdz);
-  if (wlen < 0.001) return false;
-
-  // Simple AABB vs thin segment approximation: check a few sample points along the wall
-  const steps = Math.max(2, Math.ceil(wlen / 0.25));
-  for (let s = 0; s <= steps; s++) {
-    const t = s / steps;
-    const wx = wall.start[0] + wdx * t;
-    const wz = wall.start[1] + wdz * t;
-    if (wx >= x1 && wx <= x2 && wz >= z1 && wz <= z2) return true;
-  }
-  return false;
-}
-
-// ✅ Does this wall have a passable opening at this position?
-function wallOpeningAt(wall: ApartmentWall, layout: ApartmentLayout, worldX: number, worldZ: number): boolean {
-  const openings = layout.openings.filter((o) => o.wallId === wall.id);
-  const passable = openings.filter((o) => o.type === "door" || o.type === "arch" || o.type === "open");
-  if (passable.length === 0) return false;
-
-  const wdx = wall.end[0] - wall.start[0];
-  const wdz = wall.end[1] - wall.start[1];
-  const wlen = Math.hypot(wdx, wdz);
-  if (wlen < 0.001) return false;
-
-  // Project world point onto wall to get 'along' distance
-  const t = ((worldX - wall.start[0]) * wdx + (worldZ - wall.start[1]) * wdz) / (wlen * wlen);
-  if (t < 0 || t > 1) return false;
-  const along = t * wlen;
-
-  return passable.some((op) => Math.abs(along - op.position) < op.width / 2);
-}
-
 export function validateFurniturePlacement(
   layout: ApartmentLayout,
   placed: PlacedFurniture[],
@@ -193,50 +144,7 @@ export function validateFurniturePlacement(
     return { ok: false, reason: "Furniture must remain inside the room." };
   }
 
-  const tile = room.tileSize ?? DEFAULT_TILE_SIZE;
-  const cellWidth = room.width / cols;
-  const cellDepth = room.depth / rows;
-
-  // Compute world-space rectangle of the furniture footprint
-  const physicalW = size.w * (item.w === item.d ? tile : tile); // using tile size
-  const physicalD = size.d * (item.w === item.d ? tile : tile);
-  const worldX1 = room.x + position.col * cellWidth;
-  const worldZ1 = room.z + position.row * cellDepth;
-  const worldX2 = worldX1 + physicalW;
-  const worldZ2 = worldZ1 + physicalD;
-
-  // ✅ Reject if the furniture overlaps any wall (unless there's a doorway opening there)
-  for (const wall of layout.walls) {
-    if (wall.style === "railing") continue;
-    if (!rectIntersectsWall({ x1: worldX1, z1: worldZ1, x2: worldX2, z2: worldZ2 }, wall, 0.05)) continue;
-
-    // If the wall passes through the furniture rect, check if it's a doorway
-    // Sample the wall to see if every intersecting point is inside an opening
-    const wdx = wall.end[0] - wall.start[0];
-    const wdz = wall.end[1] - wall.start[1];
-    const wlen = Math.hypot(wdx, wdz);
-    if (wlen < 0.001) continue;
-
-    const steps = Math.max(2, Math.ceil(wlen / 0.25));
-    let anyBlocked = false;
-    for (let s = 0; s <= steps; s++) {
-      const t = s / steps;
-      const wx = wall.start[0] + wdx * t;
-      const wz = wall.start[1] + wdz * t;
-      const pad = wall.thickness / 2 + 0.05;
-      const inside = wx >= worldX1 - pad && wx <= worldX2 + pad && wz >= worldZ1 - pad && wz <= worldZ2 + pad;
-      if (!inside) continue;
-      if (!wallOpeningAt(wall, layout, wx, wz)) {
-        anyBlocked = true;
-        break;
-      }
-    }
-    if (anyBlocked) {
-      return { ok: false, reason: "Furniture cannot overlap walls." };
-    }
-  }
-
-  // Existing furniture overlap check
+  // ✅ Only furniture overlap check — no wall checks at all.
   const candidate = { col: position.col, row: position.row, ...size };
   for (const existing of placed) {
     if (existing.uid === ignoreUid || existing.roomId !== position.roomId) continue;

@@ -73,22 +73,40 @@ function RoomFloor({ room, onFloorClick }: { room: ApartmentRoom; onFloorClick: 
   );
 }
 
-function WallWithHole({ width, height, thickness, doorX, doorWidth, doorHeight, color }: {
+function WallWithHole({ width, height, thickness, openings, color }: {
   width: number; height: number; thickness: number;
-  doorX: number; doorWidth: number; doorHeight: number; color: string;
+  openings: ApartmentOpening[];
+  color: string;
 }) {
   const shape = useMemo(() => {
     const s = new THREE.Shape();
-    s.moveTo(-width / 2, 0); s.lineTo(width / 2, 0); s.lineTo(width / 2, height); s.lineTo(-width / 2, height); s.lineTo(-width / 2, 0);
-    if (doorWidth > 0 && doorHeight > 0) {
-      const hole = new THREE.Path();
-      hole.moveTo(doorX - doorWidth / 2, 0); hole.lineTo(doorX + doorWidth / 2, 0); hole.lineTo(doorX + doorWidth / 2, doorHeight); hole.lineTo(doorX - doorWidth / 2, doorHeight); hole.lineTo(doorX - doorWidth / 2, 0);
-      s.holes.push(hole);
+    s.moveTo(-width / 2, 0); 
+    s.lineTo(width / 2, 0); 
+    s.lineTo(width / 2, height); 
+    s.lineTo(-width / 2, height); 
+    s.lineTo(-width / 2, 0);
+
+    for (const op of openings) {
+      if (op.type === "door" || op.type === "window") {
+        const opX = op.position - width / 2; 
+        const opY = op.type === "door" ? 0 : (op.sillHeight ?? 0); 
+
+        const hole = new THREE.Path();
+        hole.moveTo(opX - op.width / 2, opY); 
+        hole.lineTo(opX + op.width / 2, opY); 
+        hole.lineTo(opX + op.width / 2, opY + op.height); 
+        hole.lineTo(opX - op.width / 2, opY + op.height); 
+        hole.lineTo(opX - op.width / 2, opY);
+        s.holes.push(hole);
+      }
     }
     return s;
-  }, [width, height, doorX, doorWidth, doorHeight]);
+  }, [width, height, openings]);
+
   const geometry = useMemo(() => new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false }), [shape, thickness]);
+  
   useEffect(() => () => geometry.dispose(), [geometry]);
+
   return (
     <mesh geometry={geometry} position={[0, 0, -thickness / 2]} castShadow receiveShadow>
       <meshStandardMaterial color={color} roughness={0.9} />
@@ -96,7 +114,97 @@ function WallWithHole({ width, height, thickness, doorX, doorWidth, doorHeight, 
   );
 }
 
-function ApartmentWallView({ wall, openings: allOpenings, wallColor }: { wall: ApartmentWall; openings: ApartmentOpening[]; wallColor: string; }) {
+function WallLight({ layoutId, isNight, position, rotation }: { 
+  layoutId: string; isNight: boolean; position: [number, number, number]; rotation: [number, number, number]; 
+}) {
+  if (!isNight) return null;
+
+  let lightColor = "#ffd59a"; 
+  let intensity = 10;
+  let distance = 40;
+  let baseColor = "#222222"; 
+
+  if (layoutId === "two-bedroom") {
+    lightColor = "#ffffff"; 
+    intensity = 15;
+    distance = 90;
+    baseColor = "#d4af37"; 
+  } else if (layoutId === "room-parlour") {
+    lightColor = "#fff0db"; 
+    intensity = 10;
+    distance = 40;
+    baseColor = "#a0a0a0"; 
+  }
+
+  return (
+    <group position={position} rotation={rotation}>
+      <mesh position={[0, 0, 0.05]} castShadow>
+        <boxGeometry args={[0.15, 0.3, 0.1]} />
+        <meshStandardMaterial color={baseColor} metalness={0.7} roughness={0.3} />
+      </mesh>
+      <mesh position={[0, 0, 0.15]}>
+        <sphereGeometry args={[0.08, 16, 16]} />
+        <meshStandardMaterial color={lightColor} emissive={lightColor} emissiveIntensity={3} toneMapped={false} />
+      </mesh>
+      <pointLight color={lightColor} intensity={intensity} distance={distance} decay={2} position={[0, 0, 0.3]} castShadow shadow-mapSize={[512, 512]} />
+    </group>
+  );
+}
+
+// ✅ NEW: A dedicated Window component that centers vertically
+function WindowModel({ url, targetWidth, targetDepth, targetHeight }: { url: string; targetWidth: number; targetDepth: number; targetHeight: number; }) {
+  const { scene } = useGLTF(url);
+  const { clonedScene, scale, offset } = useMemo(() => {
+    const clone = scene.clone(true);
+    clone.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+        if (child.material) {
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          materials.forEach((m) => {
+            m.side = THREE.DoubleSide;
+            if (m.name.toLowerCase().includes("glass") || m.transparent) {
+              m.transparent = true;
+              m.opacity = 0.4;
+              m.depthWrite = false;
+              m.color.set("#a4d1d8"); 
+            }
+          });
+        }
+      }
+    });
+    const box = new THREE.Box3().setFromObject(clone);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    
+    const scaleX = size.x > 0 ? targetWidth / size.x : 1;
+    const scaleY = size.y > 0 ? targetHeight / size.y : 1;
+    const scaleZ = size.z > 0 ? targetDepth / size.z : 1;
+    
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    
+    // ✅ Center on all axes FOR WINDOWS ONLY
+    const offset: [number, number, number] = [
+      -center.x * scaleX,
+      -center.y * scaleY,
+      -center.z * scaleZ,
+    ];
+    
+    return { clonedScene: clone, scale: [scaleX, scaleY, scaleZ] as [number, number, number], offset };
+  }, [scene, targetWidth, targetDepth, targetHeight]);
+
+  return (
+    <group scale={scale} position={offset}>
+      <primitive object={clonedScene} />
+    </group>
+  );
+}
+
+function ApartmentWallView({ wall, openings: allOpenings, wallColor, onExitToMap }: { 
+  wall: ApartmentWall; openings: ApartmentOpening[]; wallColor: string; onExitToMap?: () => void; 
+}) {
   const dx = wall.end[0] - wall.start[0];
   const dz = wall.end[1] - wall.start[1];
   const length = Math.hypot(dx, dz);
@@ -108,33 +216,49 @@ function ApartmentWallView({ wall, openings: allOpenings, wallColor }: { wall: A
   const door = openings.find((o) => o.type === "door");
   const doorX = door ? door.position - length / 2 : 0;
   const doorWidth = door ? door.width : 0;
-  const doorHeight = door ? door.height : 0;
+
+  const SKIRT_H = 0.14;
+  const SKIRT_T = 0.04;
+  const SKIRT_Y = SKIRT_H / 2;
+  const SKIRT_Z = wall.thickness / 2 + 0.05;
+
+  const skirtSegments: { x: number; w: number }[] = [];
+  if (door) {
+    if (doorX > -length / 2 + 0.1) {
+      skirtSegments.push({ x: (-length / 2 + (doorX - doorWidth / 2)) / 2, w: (doorX - doorWidth / 2) + length / 2 });
+    }
+    if (doorX < length / 2 - 0.1) {
+      skirtSegments.push({ x: ((doorX + doorWidth / 2) + length / 2) / 2, w: length / 2 - (doorX + doorWidth / 2) });
+    }
+  } else {
+    skirtSegments.push({ x: 0, w: length });
+  }
 
   return (
     <group position={[(wall.start[0] + wall.end[0]) / 2, 0, (wall.start[1] + wall.end[1]) / 2]} rotation={[0, rotation, 0]}>
-      <WallWithHole width={length} height={wall.height} thickness={wall.thickness} doorX={doorX} doorWidth={doorWidth} doorHeight={doorHeight} color={wallColor} />
-      {door && (
-        <>
-          {doorX > -length / 2 + 0.1 && (
-            <mesh position={[(-length / 2 + doorX - doorWidth / 2) / 2, 0.07, wall.thickness / 2 + 0.015]}>
-              <boxGeometry args={[length / 2 + doorX - doorWidth / 2 + length / 2, 0.14, 0.04]} />
-              <meshStandardMaterial color={APARTMENT_SKIRTING_COLOR} roughness={0.82} />
-            </mesh>
-          )}
-          {doorX < length / 2 - 0.1 && (
-            <mesh position={[(length / 2 + doorX + doorWidth / 2) / 2, 0.07, wall.thickness / 2 + 0.015]}>
-              <boxGeometry args={[length / 2 - doorX - doorWidth / 2 + length / 2, 0.14, 0.04]} />
-              <meshStandardMaterial color={APARTMENT_SKIRTING_COLOR} roughness={0.82} />
-            </mesh>
-          )}
-        </>
-      )}
+      
+      <WallWithHole width={length} height={wall.height} thickness={wall.thickness} openings={openings} color={wallColor} />
+
+      {skirtSegments.map((seg, i) => (
+        <mesh key={`skirt-${i}`} position={[seg.x, SKIRT_Y, SKIRT_Z]} castShadow={false} receiveShadow={false}>
+          <boxGeometry args={[seg.w, SKIRT_H, SKIRT_T]} />
+          <meshStandardMaterial color={APARTMENT_SKIRTING_COLOR} roughness={0.82} />
+        </mesh>
+      ))}
+
       <mesh position={[0, wall.height - 0.025, wall.thickness / 2 + 0.015]}>
         <boxGeometry args={[length, 0.05, wall.thickness + 0.035]} />
         <meshStandardMaterial color={APARTMENT_TOP_EDGE_COLOR} roughness={0.82} />
       </mesh>
+
+      {/* ✅ DOOR (Clickable to exit) */}
       {door && (
-        <group position={[doorX, 0, wall.thickness / 2 + 0.035]}>
+        <group 
+          position={[doorX, 0, wall.thickness / 2 + 0.035]} 
+          onClick={(e) => { e.stopPropagation(); onExitToMap?.(); }}
+          onPointerOver={() => (document.body.style.cursor = 'pointer')}
+          onPointerOut={() => (document.body.style.cursor = 'auto')}
+        >
           <mesh position={[0, door.height / 2, 0]} castShadow>
             <boxGeometry args={[door.width - 0.1, door.height - 0.05, 0.07]} />
             <meshStandardMaterial color="#5a3b28" roughness={0.85} />
@@ -145,15 +269,25 @@ function ApartmentWallView({ wall, openings: allOpenings, wallColor }: { wall: A
           </mesh>
         </group>
       )}
+
+      {/* ✅ WINDOWS (Using the new WindowModel) */}
       {openings.filter(o => o.type === "window").map((opening) => (
-        <group key={`window-${opening.position}`} position={[opening.position - length / 2, opening.sillHeight ?? 0, wall.thickness / 2 + 0.03]}>
-          <mesh position={[0, opening.height / 2, 0]}>
-            <boxGeometry args={[opening.width - 0.08, opening.height - 0.08, 0.03]} />
-            <meshStandardMaterial color={APARTMENT_GLASS_COLOR} transparent opacity={0.5} roughness={0.2} />
-          </mesh>
-          <mesh position={[-opening.width / 2, opening.height / 2, 0]}><boxGeometry args={[0.07, opening.height, 0.06]} /><meshStandardMaterial color="#f3e7d2" /></mesh>
-          <mesh position={[opening.width / 2, opening.height / 2, 0]}><boxGeometry args={[0.07, opening.height, 0.06]} /><meshStandardMaterial color="#f3e7d2" /></mesh>
-          <mesh position={[0, opening.height, 0]}><boxGeometry args={[opening.width + 0.08, 0.07, 0.06]} /><meshStandardMaterial color="#f3e7d2" /></mesh>
+        <group 
+          key={`window-${opening.position}`} 
+          position={[
+            opening.position - length / 2, 
+            (opening.sillHeight ?? 0) + (opening.height / 2), 
+            0 
+          ]}
+        >
+          <Suspense fallback={null}>
+            <WindowModel 
+              url="/models/window.glb" 
+              targetWidth={opening.width} 
+              targetDepth={wall.thickness} 
+              targetHeight={opening.height} 
+            />
+          </Suspense>
         </group>
       ))}
     </group>
@@ -179,9 +313,10 @@ function WoodenStaircase() {
   );
 }
 
+// ✅ FIXED: Furniture uses -box.min.y so it sits perfectly on the floor
 function GLTFModel({ url, targetWidth, targetDepth, targetHeight }: { url: string; targetWidth: number; targetDepth: number; targetHeight: number; }) {
   const { scene } = useGLTF(url);
-  const { clonedScene, scale, yOffset } = useMemo(() => {
+  const { clonedScene, scale, offset } = useMemo(() => {
     const clone = scene.clone(true);
     clone.traverse((child) => {
       if (child instanceof THREE.Mesh) {
@@ -192,13 +327,28 @@ function GLTFModel({ url, targetWidth, targetDepth, targetHeight }: { url: strin
     const box = new THREE.Box3().setFromObject(clone);
     const size = new THREE.Vector3();
     box.getSize(size);
+    
     const scaleX = size.x > 0 ? targetWidth / size.x : 1;
     const scaleY = size.y > 0 ? targetHeight / size.y : 1;
     const scaleZ = size.z > 0 ? targetDepth / size.z : 1;
-    const offset = -box.min.y * scaleY;
-    return { clonedScene: clone, scale: [scaleX, scaleY, scaleZ] as [number, number, number], yOffset: offset };
+    
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    
+    const offset: [number, number, number] = [
+      -center.x * scaleX,
+      -box.min.y * scaleY, // ✅ Sits on the floor
+      -center.z * scaleZ,
+    ];
+    
+    return { clonedScene: clone, scale: [scaleX, scaleY, scaleZ] as [number, number, number], offset };
   }, [scene, targetWidth, targetDepth, targetHeight]);
-  return (<group scale={scale} position={[0, yOffset, 0]}><primitive object={clonedScene} /></group>);
+
+  return (
+    <group scale={scale} position={offset}>
+      <primitive object={clonedScene} />
+    </group>
+  );
 }
 
 function B({ p, s, c, rough = 0.8 }: { p: [number, number, number]; s: [number, number, number]; c: string; rough?: number; }) {
@@ -307,7 +457,7 @@ function FurnitureLayer({ layout, furniture, onSelectFurniture, movingUid, isVal
               <FurnitureHighlight x={x} z={z} w={size.w * tile} d={size.d * tile} valid={isValid} />
             )}
             <group position={[x, FLOOR_Y, z]} rotation={[0, entry.rotation * Math.PI / 2, 0]} onClick={(event) => { event.stopPropagation(); onSelectFurniture(entry.uid); }}>
-              <FurnitureModel item={item} W={item.w * tile - 0.08} D={item.d * tile - 0.08} />
+              <FurnitureModel item={item} W={item.w * tile} D={item.d * tile} />
             </group>
           </group>
         );
@@ -316,6 +466,7 @@ function FurnitureLayer({ layout, furniture, onSelectFurniture, movingUid, isVal
   );
 }
 
+// ✅ NO wall blocking. Only blocks tiles outside room bounds and tiles with furniture.
 function buildWalkableGrid(layout: ApartmentLayout, furniture: PlacedFurniture[]): {
   grid: PathfindingGrid;
   originX: number;
@@ -338,39 +489,18 @@ function buildWalkableGrid(layout: ApartmentLayout, furniture: PlacedFurniture[]
   const toCol = (x: number) => Math.floor((x - minX) / tileSize);
   const toRow = (z: number) => Math.floor((z - minZ) / tileSize);
 
-  for (const wall of layout.walls) {
-    if (wall.style === "railing") continue;
-    const openings = layout.openings.filter((o) => o.wallId === wall.id);
-    const passableOpenings = openings.filter((o) => o.type === "door" || o.type === "arch" || o.type === "open");
-
-    const dx = wall.end[0] - wall.start[0];
-    const dz = wall.end[1] - wall.start[1];
-    const len = Math.hypot(dx, dz);
-    const steps = Math.max(1, Math.ceil(len / (tileSize * 0.25)));
-    const blockedRadius = Math.max(0, Math.floor((wall.thickness / 2) / tileSize));
-
-    for (let s = 0; s <= steps; s++) {
-      const t = s / steps;
-      const wx = wall.start[0] + dx * t;
-      const wz = wall.start[1] + dz * t;
-      const insideOpening = passableOpenings.some((op) => {
-        const halfWidth = op.width / 2;
-        const along = t * len;
-        return Math.abs(along - op.position) <= halfWidth;
-      });
-      if (insideOpening) continue;
-
-      const col = toCol(wx);
-      const row = toRow(wz);
-      for (let r = -blockedRadius; r <= blockedRadius; r++) {
-        for (let c = -blockedRadius; c <= blockedRadius; c++) {
-          const rr = row + r, cc = col + c;
-          if (rr >= 0 && rr < rows && cc >= 0 && cc < cols) walkable[rr][cc] = false;
-        }
+  // Block tiles OUTSIDE the room bounds
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const wx = minX + c * tileSize;
+      const wz = minZ + r * tileSize;
+      if (wx < minX - 0.001 || wx >= maxX || wz < minZ - 0.001 || wz >= maxZ) {
+        walkable[r][c] = false;
       }
     }
   }
 
+  // Block furniture cells — nothing else.
   for (const entry of furniture) {
     const item = FURNITURE_BY_ID[entry.itemId];
     const room = layout.rooms.find((r) => r.id === entry.roomId);
@@ -534,16 +664,58 @@ function PlayerCharacter({
   );
 }
 
-function ApartmentShell({ layout, furniture, onSelectFurniture, onFloorClick, movingUid, isValid }: {
+function ApartmentShell({ layout, furniture, onSelectFurniture, onFloorClick, movingUid, isValid, onExitToMap, isNight }: {
   layout: ApartmentLayout; furniture: PlacedFurniture[];
   onSelectFurniture: (uid: string) => void; onFloorClick: (x: number, z: number) => void;
-  movingUid: string | null; isValid: boolean;
+  movingUid: string | null; isValid: boolean; onExitToMap?: () => void; isNight: boolean;
 }) {
   const wallColor = getWallColor(layout.id);
+  
+  // Find the two longest walls to place the lights on
+  const longWalls = useMemo(() => {
+    return [...layout.walls]
+      .filter(w => w.style !== "railing" && w.height > 1)
+      .sort((a, b) => {
+        const lenA = Math.hypot(a.end[0] - a.start[0], a.end[1] - a.start[1]);
+        const lenB = Math.hypot(b.end[0] - b.start[0], b.end[1] - b.start[1]);
+        return lenB - lenA;
+      })
+      .slice(0, 2); // Only take the top 2 longest walls
+  }, [layout.walls]);
+
   return (
     <group>
       {layout.rooms.map((room) => <RoomFloor key={room.id} room={room} onFloorClick={onFloorClick} />)}
-      {layout.walls.map((wall) => <ApartmentWallView key={wall.id} wall={wall} openings={layout.openings} wallColor={wallColor} />)}
+      
+      {layout.walls.map((wall) => <ApartmentWallView key={wall.id} wall={wall} openings={layout.openings} wallColor={wallColor} onExitToMap={onExitToMap} />)}
+
+      {/* ✅ Add Wall Lights to the longest walls */}
+      {longWalls.map((wall) => {
+        const dx = wall.end[0] - wall.start[0];
+        const dz = wall.end[1] - wall.start[1];
+        const midX = (wall.start[0] + wall.end[0]) / 2;
+        const midZ = (wall.start[1] + wall.end[1]) / 2;
+
+        const room = layout.rooms[0]; // Get the main room
+        const centerX = room ? room.x + room.width / 2 : 0;
+        const centerZ = room ? room.z + room.depth / 2 : 0;
+        
+        // Math to find the angle between the wall and the room center
+        const angleToCenter = Math.atan2(centerX - midX, centerZ - midZ);
+        const rotationY = angleToCenter;
+
+        return (
+          <WallLight
+            key={`light-${wall.id}`}
+            layoutId={layout.id}
+            isNight={isNight}
+            position={[midX, 2.0, midZ]} 
+            rotation={[0, rotationY, 0]}  
+          />
+        );
+      })
+}
+
       {layout.id === "two-bedroom" && <WoodenStaircase />}
       <FurnitureLayer layout={layout} furniture={furniture} onSelectFurniture={onSelectFurniture} movingUid={movingUid} isValid={isValid} />
     </group>
@@ -569,11 +741,26 @@ export default function Apartment({
   const pathData = useMemo(() => buildWalkableGrid(layout, furniture), [layout, furniture]);
 
   return (
-    <Canvas key={layout.id} orthographic shadows dpr={[1, 1.25]} camera={{ position: cameraPosition, zoom, near: 0.1, far: 100 }} gl={{ antialias: true, alpha: false }}>
+    <Canvas key={layout.id} orthographic shadows dpr={[1, 1.25]} camera={{ position: cameraPosition, zoom, near: 1, far: 60 }} gl={{ antialias: true, alpha: false }}>
       <color attach="background" args={[skyColor]} />
-      <ambientLight intensity={isNight ? 0.6 : 1.4} color={isNight ? "#8094d6" : "#ffe8ce"} />
-      <hemisphereLight args={isNight ? ["#2f4488", "#1c2431", 0.8] : ["#fff6e7", "#a0816b", 1.2]} />
-      <directionalLight position={[target[0] - 10, isNight ? 8 : 20, target[2] + 12]} intensity={isNight ? 1.2 : 2.5} color={isNight ? "#9db6ff" : "#fff0db"} castShadow shadow-mapSize={[2048, 2048]} shadow-camera-left={-15} shadow-camera-right={15} shadow-camera-top={15} shadow-camera-bottom={-15} shadow-camera-near={1} shadow-camera-far={60} shadow-bias={-0.0001} />
+      
+      {/* ✅ Dim the sun at night so wall lights are visible */}
+      <ambientLight intensity={isNight ? 0.4 : 1.4} color={isNight ? "#6c7eb3" : "#ffe8ce"} />
+      <hemisphereLight args={isNight ? ["#2a3b5c", "#0a0a0a", 0.4] : ["#fff6e7", "#a0816b", 1.2]} />
+      <directionalLight 
+        position={[target[0] - 10, isNight ? 8 : 20, target[2] + 12]} 
+        intensity={isNight ? 0.1 : 2.5} 
+        color={isNight ? "#556699" : "#fff0db"} 
+        castShadow 
+        shadow-mapSize={[2048, 2048]} 
+        shadow-camera-left={-15} 
+        shadow-camera-right={15} 
+        shadow-camera-top={15} 
+        shadow-camera-bottom={-15} 
+        shadow-camera-near={1} 
+        shadow-camera-far={60} 
+        shadow-bias={-0.0001} 
+      />
 
       <ApartmentShell
         layout={layout}
@@ -584,6 +771,8 @@ export default function Apartment({
         }}
         movingUid={movingUid}
         isValid={movingIsValid}
+        onExitToMap={onExitToMap}
+        isNight={isNight}
       />
 
       <PlayerCharacter

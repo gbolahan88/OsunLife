@@ -90,12 +90,12 @@ export default function Hud({
         <div className="pointer-events-auto mx-auto mt-2 flex w-fit items-center justify-center gap-5 rounded-full border border-white/30 bg-white/65 px-4 py-1.5 text-[11px] font-semibold text-[#506258] shadow-[0_4px_16px_rgba(24,50,39,0.10)] backdrop-blur-xl sm:hidden">
           <span className="flex items-center gap-1.5 whitespace-nowrap">
             <span aria-hidden="true">👀</span>
-            <span>24.7k visits</span>
+            <span>2 visits</span>
           </span>
 
           <span className="flex items-center gap-1.5 whitespace-nowrap">
             <span className="inline-block h-2 w-2 rounded-full bg-[#20b978]" />
-            <span>68k online</span>
+            <span>1 online</span>
           </span>
         </div>
       </div>

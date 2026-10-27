@@ -169,7 +169,7 @@ export default function HomeInterior({
             >
               <ArrowLeft size={18} />
             </button>
-            <div className="min-w-0 max-w-[calc(100vw-5rem)] rounded-md bg-white/40 px-3 py-2 shadow-lg backdrop-blur">
+            <div className="min-w-0 max-w-[calc(100vw-5rem)] rounded-md bg-white/80 px-3 py-2 shadow-lg backdrop-blur">
               <p className="truncate text-[9px] font-bold uppercase tracking-[0.12em] text-[#728274]">{subtitle}</p>
               <h1 className="truncate text-sm font-extrabold text-[#263d31]">{title}</h1>
             </div>
@@ -271,13 +271,13 @@ export default function HomeInterior({
                     </button>
                   </div>
 
-                  <div className="flex items-center gap-3">
-                    <div className="relative flex h-24 w-24 shrink-0 items-center justify-center">
-                      <button onClick={() => moveSelected(0, -1)} className="absolute left-1/2 top-0 -translate-x-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-[#e9f5ed] text-[#26724f]"><ArrowUp size={12} /></button>
-                      <button onClick={() => moveSelected(-1, 0)} className="absolute left-0 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-[#e9f5ed] text-[#26724f]"><ArrowLeftIcon size={12} /></button>
-                      <button onClick={() => moveSelected(1, 0)} className="absolute right-0 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-[#e9f5ed] text-[#26724f]"><ArrowRight size={12} /></button>
-                      <button onClick={() => moveSelected(0, 1)} className="absolute bottom-0 left-1/2 -translate-x-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-[#e9f5ed] text-[#26724f]"><ArrowDown size={12} /></button>
-                      <button onClick={rotateSelected} className="flex h-11 w-11 items-center justify-center rounded-full bg-[#263d31] text-white"><RotateCw size={15} /></button>
+                  <div className="flex items-center gap-5">
+                    <div className="relative flex h-40 w-40 shrink-0 items-center justify-center">
+                      <button onClick={() => moveSelected(0, -1)} className="absolute left-1/2 top-0 -translate-x-1/2 flex h-12 w-12 items-center justify-center rounded-full bg-[#e9f5ed] text-[#26724f]"><ArrowUp size={12} /></button>
+                      <button onClick={() => moveSelected(-1, 0)} className="absolute left-0 top-1/2 -translate-y-1/2 flex h-12 w-12 items-center justify-center rounded-full bg-[#e9f5ed] text-[#26724f]"><ArrowLeftIcon size={12} /></button>
+                      <button onClick={() => moveSelected(1, 0)} className="absolute right-0 top-1/2 -translate-y-1/2 flex h-12 w-12 items-center justify-center rounded-full bg-[#e9f5ed] text-[#26724f]"><ArrowRight size={12} /></button>
+                      <button onClick={() => moveSelected(0, 1)} className="absolute bottom-0 left-1/2 -translate-x-1/2 flex h-12 w-12 items-center justify-center rounded-full bg-[#e9f5ed] text-[#26724f]"><ArrowDown size={12} /></button>
+                      <button onClick={rotateSelected} className="flex h-12 w-12 items-center justify-center rounded-full bg-[#263d31] text-white"><RotateCw size={20} /></button>
                     </div>
 
                     <div className="flex flex-1 flex-col gap-1.5">
@@ -300,8 +300,8 @@ export default function HomeInterior({
         )}
 
         {!buyMode && interactionFurniture && interactionDefinition && (
-          <div className="pointer-events-auto absolute inset-x-0 bottom-32 z-40 flex justify-center px-3">
-            <div className="w-[min(22rem,calc(100vw-1.5rem))] rounded-2xl bg-white p-3 shadow-2xl">
+          <div className="pointer-events-auto absolute inset-x-0 bottom-40 z-40 flex justify-center px-3">
+            <div className="w-[min(22rem,calc(100vw-1.5rem))] rounded-2xl bg-white/75 p-3 shadow-2xl">
               <div className="mb-2 flex items-center gap-2">
                 <span className="text-lg">{interactionDefinition.emoji}</span>
                 <h2 className="flex-1 truncate text-sm font-extrabold text-[#1b3329]">{interactionDefinition.name}</h2>
@@ -312,12 +312,12 @@ export default function HomeInterior({
               {interactionActions.length === 0 ? (
                 <p className="py-2 text-center text-[11px] text-[#718276]">Nothing to do with this.</p>
               ) : (
-                <div className="flex flex-col gap-1.5">
+                <div className="flex h-15 gap-1.5">
                   {interactionActions.map((action, i) => (
                     <button
                       key={i}
                       onClick={() => performInteraction(action.need, action.amount)}
-                      className="flex min-h-10 items-center justify-between rounded-xl bg-[#eef3eb] px-3 text-[12px] font-bold text-[#1b3329] transition-colors hover:bg-[#dce7d9]"
+                      className="flex min-h-10 items-center justify-between rounded-xl bg-[#e2f0d9] px-3 text-[12px] font-bold text-[#1b3329] transition-colors hover:bg-[#dce7d9]"
                     >
                       <span className="flex items-center gap-2">
                         <span>{action.emoji}</span>

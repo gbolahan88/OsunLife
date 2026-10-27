@@ -79,6 +79,8 @@ export async function signIn(
     };
   }
 
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
   redirect("/");
 }
 
@@ -175,6 +177,8 @@ export async function signUp(
       error: "Could not reach the account service. Try again shortly.",
     };
   }
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
 
   redirect("/");
 }
