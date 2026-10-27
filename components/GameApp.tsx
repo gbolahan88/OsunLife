@@ -141,7 +141,7 @@ export default function GameApp({ username }: { username: string }) {
 
   if (!ready) {
     return (
-      <div className="flex h-dvh items-center justify-center text-sm font-bold text-[var(--accent)]">
+      <div className="flex h-dvh items-center justify-center text-lg font-bold text-[var(--accent)]">
         Osun Life…
       </div>
     );

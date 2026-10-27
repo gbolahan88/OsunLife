@@ -40,7 +40,7 @@ export type ApartmentLayout = {
 
 export const APARTMENT_SIZE = {
   width: 16, depth: 8, wallHeight: 3,
-  partitionHeight: 1.35, wallThickness: 0.16,
+  partitionHeight: 1.35, wallThickness: 0.03,
 };
 
 export const DEFAULT_TILE_SIZE = 1;
@@ -91,36 +91,38 @@ function withGrid(room: ApartmentRoom, minRows: number): ApartmentRoom {
 /* ========================================================================== */
 
 const TWO_BEDROOM_ROOMS: ApartmentRoom[] = ([
-  { id: "living", name: "Living Room", kind: "living", x: -8, z: 0, width: 9, depth: 10,
+  { id: "living", name: "Living Room", kind: "living", x: -8, z: 10, width: 10, depth: 15,
     floorLight: TWO_BED_TILE_LIGHT, floorDark: TWO_BED_TILE_DARK },
-  { id: "bedroom-1", name: "Bedroom 1", kind: "bedroom", x: 1, z: 0, width: 4, depth: 5,
+  { id: "bedroom-1", name: "Bedroom 1", kind: "bedroom", x: -8, z: 0, width: 12, depth: 10,
     floorLight: TWO_BED_TILE_LIGHT, floorDark: TWO_BED_TILE_DARK },
-  { id: "bedroom-2", name: "Bedroom 2", kind: "bedroom", x: 5, z: 0, width: 3, depth: 5,
+  { id: "bedroom-2", name: "Bedroom 2", kind: "bedroom", x: 2, z: 10, width: 12, depth: 15,
     floorLight: TWO_BED_TILE_LIGHT, floorDark: TWO_BED_TILE_DARK },
-  { id: "kitchen", name: "Kitchen", kind: "kitchen", x: 1, z: 5, width: 7, depth: 5,
+  { id: "kitchen", name: "Kitchen", kind: "kitchen", x: 4, z: 0, width: 10, depth: 10,
     floorLight: TWO_BED_KITCHEN_LIGHT, floorDark: TWO_BED_KITCHEN_DARK },
 ] satisfies ApartmentRoom[]).map((r) => withGrid(r, LARGER_APARTMENT_MIN_GRID_ROWS));
 
 const TWO_BEDROOM_WALLS: ApartmentWall[] = [
-  { id: "back", start: [-8, 0], end: [8, 0], height: WALL_H, thickness: WALL_T },
-  { id: "right", start: [8, 0], end: [8, 10], height: WALL_H, thickness: WALL_T },
-  { id: "living-partition", start: [1, 0], end: [1, 5], height: PART_H, thickness: WALL_T },
-  { id: "bedroom-divider", start: [5, 0], end: [5, 5], height: PART_H, thickness: WALL_T },
-  { id: "kitchen-partition", start: [1, 5], end: [8, 5], height: PART_H, thickness: WALL_T },
-  { id: "kitchen-divider", start: [5, 5], end: [5, 10], height: PART_H, thickness: WALL_T },
+  { id: "front", start: [-8, 25], end: [14, 25], height: 0.4, thickness: WALL_T },
+  { id: "back", start: [-8, 0], end: [14, 0], height: WALL_H, thickness: WALL_T },
+  { id: "left", start: [-8, 0], end: [-8, 25], height: WALL_H, thickness: WALL_T },
+  { id: "right", start: [14, 0], end: [14, 25], height: 0.4, thickness: WALL_T },
+  { id: "bedroom-divider", start: [-8, 10], end: [4, 10], height: PART_H, thickness: WALL_T },
+  { id: "bedroom-partition", start: [4, 0], end: [4, 10], height: PART_H, thickness: WALL_T },
+  { id: "living-partition", start: [5, 10], end: [5, 25], height: PART_H, thickness: WALL_T },
+  { id: "kitchen-divider", start: [5, 10], end: [12, 10], height: PART_H, thickness: WALL_T },
 ];
 
 const TWO_BEDROOM_OPENINGS: ApartmentOpening[] = [
-  { wallId: "back", position: 0, width: 1.2, height: 2.2, type: "door" },
-  { wallId: "back", position: 4, width: 2.0, height: 1.8, sillHeight: 0.5, type: "window", paneColumns: 3, paneRows: 2 },
-  { wallId: "back", position: 7, width: 2.0, height: 1.8, sillHeight: 0.5, type: "window", paneColumns: 3, paneRows: 2 },
+  { wallId: "left", position: 23, width: 1.2, height: 2.2, type: "door" },
+  { wallId: "back", position: 5, width: 2.0, height: 1.8, sillHeight: 0.5, type: "window", paneColumns: 3, paneRows: 2 },
+  { wallId: "back", position: 18, width: 2.0, height: 1.8, sillHeight: 0.5, type: "window", paneColumns: 3, paneRows: 2 },
 ];
 
 const TWO_BEDROOM_LAYOUT: ApartmentLayout = {
   id: "two-bedroom", name: "2-bedroom flat",
   rooms: TWO_BEDROOM_ROOMS, walls: TWO_BEDROOM_WALLS, openings: TWO_BEDROOM_OPENINGS,
   floorBounds: boundsOf(TWO_BEDROOM_ROOMS),
-  camera: { target: [0, 0, 5], zoom: 32 },
+  camera: { target: [0, 0, 5], zoom: 33 },
 };
 
 /* ========================================================================== */
@@ -128,33 +130,41 @@ const TWO_BEDROOM_LAYOUT: ApartmentLayout = {
 /* ========================================================================== */
 
 const PARLOUR_ROOMS: ApartmentRoom[] = ([
-  { id: "parlour", name: "Parlour", kind: "living", x: -5, z: 0, width: 7, depth: 8,
-    floorLight: PARLOUR_TILE_LIGHT, floorDark: PARLOUR_TILE_DARK },
-  { id: "bedroom", name: "Bedroom", kind: "bedroom", x: 2, z: 0, width: 4, depth: 4,
-    floorLight: PARLOUR_TILE_LIGHT, floorDark: PARLOUR_TILE_DARK },
-  { id: "bathroom", name: "Bathroom", kind: "bathroom", x: 2, z: 4, width: 4, depth: 4,
+  { id: "parlour", name: "Parlour", kind: "living", x: -5, z: 8, width: 9, depth: 10,
     floorLight: TWO_BED_KITCHEN_LIGHT, floorDark: TWO_BED_KITCHEN_DARK },
+  { id: "bedroom", name: "Bedroom", kind: "bedroom", x: -5, z: 0, width: 7, depth: 8,
+    floorLight: PARLOUR_TILE_LIGHT, floorDark: PARLOUR_TILE_DARK },
+  { id: "kitchen", name: "Kitchen", kind: "kitchen", x: 2, z: 0, width: 6, depth: 8,
+    floorLight: TWO_BED_KITCHEN_LIGHT, floorDark: TWO_BED_KITCHEN_DARK },
+  { id: "bathroom", name: "Bathroom", kind: "bathroom", x: 4, z: 8, width: 4, depth: 10,
+    floorLight: PARLOUR_TILE_LIGHT, floorDark: PARLOUR_TILE_DARK },
 ] satisfies ApartmentRoom[]).map((r) => withGrid(r, LARGER_APARTMENT_MIN_GRID_ROWS));
 
 const PARLOUR_WALLS: ApartmentWall[] = [
-  { id: "back", start: [-5, 0], end: [6, 0], height: WALL_H, thickness: WALL_T },
-  { id: "left", start: [-5, 0], end: [-5, 8], height: WALL_H, thickness: WALL_T },
-  { id: "right", start: [6, 0], end: [6, 8], height: WALL_H, thickness: WALL_T },
-  { id: "parlour-partition", start: [2, 0], end: [2, 8], height: PART_H, thickness: WALL_T },
-  { id: "bed-bath-divider", start: [2, 4], end: [6, 4], height: PART_H, thickness: WALL_T },
+  { id: "front", start: [-5, 18], end: [8, 18], height: 0.4, thickness: WALL_T },
+  { id: "back", start: [-5, 0], end: [8, 0], height: WALL_H, thickness: WALL_T },
+  { id: "left", start: [-5, 0], end: [-5, 18], height: WALL_H, thickness: WALL_T },
+  { id: "right", start: [8, 0], end: [8, 18], height: 0.4, thickness: WALL_T },
+  { id: "parlour-partition", start: [-1, 8], end: [3, 8], height: PART_H, thickness: WALL_T },
+  { id: "bed-kitchen-partition", start: [2, 0], end: [2, 8], height: PART_H, thickness: WALL_T },
+  { id: "bed-partition", start: [-5, 8], end: [-2, 8], height: PART_H, thickness: WALL_T },
+  { id: "bath-partition", start: [4, 14], end: [4, 18], height: PART_H, thickness: WALL_T },
+  { id: "parlour-bath-partition", start: [4, 8], end: [4, 13], height: PART_H, thickness: WALL_T },
+  { id: "bath-kitchen-divider", start: [4, 8], end: [8, 8], height: PART_H, thickness: WALL_T },
 ];
 
 const PARLOUR_OPENINGS: ApartmentOpening[] = [
-  { wallId: "left", position: 6, width: 1.1, height: 2.2, type: "door" },
+  { wallId: "left", position: 16, width: 1.1, height: 2.2, type: "door" },
+  
   { wallId: "back", position: 3, width: 1.8, height: 1.6, sillHeight: 0.5, type: "window", paneColumns: 2, paneRows: 2 },
-  { wallId: "back", position: 8, width: 1.5, height: 1.6, sillHeight: 0.5, type: "window", paneColumns: 2, paneRows: 2 },
+  { wallId: "back", position: 11, width: 1.5, height: 1.6, sillHeight: 0.5, type: "window", paneColumns: 2, paneRows: 2 },
 ];
 
 const PARLOUR_LAYOUT: ApartmentLayout = {
   id: "room-parlour", name: "Room & parlour self-con",
   rooms: PARLOUR_ROOMS, walls: PARLOUR_WALLS, openings: PARLOUR_OPENINGS,
   floorBounds: boundsOf(PARLOUR_ROOMS),
-  camera: { target: [0.5, 0, 4], zoom: 38 },
+  camera: { target: [0.5, 0, 4], zoom: 32 },
 };
 
 /* ========================================================================== */
@@ -162,7 +172,7 @@ const PARLOUR_LAYOUT: ApartmentLayout = {
 /* ========================================================================== */
 
 const SELF_CON_ROOMS: ApartmentRoom[] = ([
-  { id: "studio", name: "Main Room", kind: "studio", x: -4, z: 0, width: 17, depth: 15,
+  { id: "studio", name: "Main Room", kind: "studio", x: -4, z: 0, width: 12, depth: 15,
     floorLight: SELF_CON_TILE_LIGHT, floorDark: SELF_CON_TILE_DARK },
   { id: "kitchen", name: "Kitchen", kind: "kitchen", x: 8, z: 0, width: 5, depth: 9,
     floorLight: TWO_BED_KITCHEN_LIGHT, floorDark: TWO_BED_KITCHEN_DARK },
@@ -173,8 +183,9 @@ const SELF_CON_ROOMS: ApartmentRoom[] = ([
 const SELF_CON_WALLS: ApartmentWall[] = [
   // Outer walls
   { id: "back", start: [-4, 0], end: [13, 0], height: WALL_H, thickness: WALL_T },
+  { id: "front", start: [-4, 15], end: [13.3, 15], height: 0.3, thickness: WALL_T },
   { id: "left", start: [-4, 0], end: [-4, 15], height: WALL_H, thickness: WALL_T },
-  { id: "right", start: [13, 0], end: [13, 15], height: 0.3, thickness: WALL_T },
+  { id: "right", start: [13.2, 0], end: [13.2, 15], height: 0.3, thickness: WALL_T },
 
   // ✅ Partition wall BROKEN into two pieces to create open gaps:
   // Bottom piece (bathroom): from z=0 to z=1.5 (wall stops, gap begins)
@@ -187,19 +198,19 @@ const SELF_CON_WALLS: ApartmentWall[] = [
   { id: "wet-partition-3", start: [8, 12], end: [8, 15], height: 1.5, thickness: WALL_T },
 
   // Divider between bathroom and kitchen
-  { id: "bath-kitchen-divider", start: [8, 9], end: [13, 9], height: PART_H, thickness: WALL_T },
+  { id: "bath-kitchen-divider", start: [8, 9], end: [13, 9], height: 1, thickness: WALL_T },
 ];
 
 const SELF_CON_OPENINGS: ApartmentOpening[] = [
   // Main entrance door (on the left wall)
-  { wallId: "left", position: 12, width: 1.1, height: 2.2, type: "door" },
+  { wallId: "left", position: 12.5, width: 1.1, height: 2.2, type: "door" },
 
   // Note: No openings for bathroom/kitchen - the wall gaps ARE the entrance
   // (No doors, no frames, just empty floor where the wall stops)
 
   // Windows on back wall
-  { wallId: "back", position: 3, width: 2.0, height: 1.6, sillHeight: 0.5, type: "window", paneColumns: 3, paneRows: 2 },
-  { wallId: "back", position: 10, width: 1.5, height: 1.6, sillHeight: 0.5, type: "window", paneColumns: 2, paneRows: 2 },
+  { wallId: "back", position: 5, width: 2.0, height: 1.6, sillHeight: 0.5, type: "window", paneColumns: 3, paneRows: 2 },
+  { wallId: "back", position: 15, width: 1.5, height: 1.6, sillHeight: 0.5, type: "window", paneColumns: 2, paneRows: 2 },
 ];
 
 const SELF_CON_LAYOUT: ApartmentLayout = {
@@ -220,7 +231,6 @@ export const APARTMENT_LAYOUTS: Record<HousingPlanId, ApartmentLayout> = {
 export function getApartmentLayout(plan: HousingPlanId): ApartmentLayout {
   return APARTMENT_LAYOUTS[plan];
 }
-
 export const APARTMENT_ROOMS = TWO_BEDROOM_LAYOUT.rooms;
 export const APARTMENT_WALLS = TWO_BEDROOM_LAYOUT.walls;
 export const APARTMENT_OPENINGS = TWO_BEDROOM_LAYOUT.openings;

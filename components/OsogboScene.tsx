@@ -1,6 +1,6 @@
 "use client";
 
-import { Html, OrbitControls } from "@react-three/drei";
+import { Html, OrbitControls, MapControls } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
@@ -859,6 +859,7 @@ function ClubSkyLights({ height }: { height: number }) {
   useFrame(({ clock }) => {
     if (beams.current) beams.current.visible = lighting.night > 0.2;
     beams.current?.children.forEach((beam, index) => {
+      // Swing the lights from the source
       beam.rotation.x = Math.sin(clock.elapsedTime * 0.8 + index) * 0.16;
       beam.rotation.z = Math.cos(clock.elapsedTime * 0.65 + index) * 0.12;
     });
@@ -868,14 +869,19 @@ function ClubSkyLights({ height }: { height: number }) {
     <group ref={beams} position={[0, height, 0]}>
       {["#8b5cf6", "#35d9ff", "#f04f9b"].map((color, index) => (
         <group key={color} position={[(index - 1) * 15, 0, (index - 1) * 11]}>
-          <mesh position={[0, 165, 0]}>
-            <coneGeometry args={[18, 330, 20, 1, true]} />
-            <meshBasicMaterial color={color} transparent opacity={0.2} depthWrite={false} blending={THREE.AdditiveBlending} />
+          
+          {/* ✅ Flipped upside down so the point is at the club and the wide base is in the sky */}
+          <mesh position={[0, 165, 0]} rotation={[Math.PI, 0, 0]}>
+            <coneGeometry args={[20, 330, 20, 1, true]} />
+            <meshBasicMaterial color={color} transparent opacity={0.35} depthWrite={false} blending={THREE.AdditiveBlending} />
           </mesh>
-          <mesh position={[0, 165, 0]}>
-            <coneGeometry args={[8, 330, 16, 1, true]} />
-            <meshBasicMaterial color={color} transparent opacity={0.18} depthWrite={false} blending={THREE.AdditiveBlending} />
+          
+          {/* The bright inner core of the beam */}
+          <mesh position={[0, 165, 0]} rotation={[Math.PI, 0, 0]}>
+            <cylinderGeometry args={[2, 2, 330, 8, 1, true]} />
+            <meshBasicMaterial color={color} transparent opacity={0.6} depthWrite={false} blending={THREE.AdditiveBlending} />
           </mesh>
+          
         </group>
       ))}
     </group>
@@ -1098,7 +1104,7 @@ function OpenBar({ building }: { building: Building }) {
           </>
         )}
       </group>
-
+      <ClubSkyLights height={premium ? 45 : 35} />
       <Html position={[0, DECK_TOP + (premium ? 60 : 40), shelfZ]} center zIndexRange={[100, 0]}>
         <div
           className="pointer-events-none whitespace-nowrap rounded-sm border border-white/70 px-1.5 py-0.5 text-center text-[7px] font-black tracking-widest text-white shadow"
@@ -2275,7 +2281,24 @@ function Scene({ active, interactive, hour, appearance, onVisit, onEnterBuilding
   return (
     <>
       <Atmosphere hour={hour} />
-      <OrbitControls makeDefault enabled={active && interactive} enableDamping dampingFactor={0.1} enableRotate enablePan enableZoom minPolarAngle={0.18} maxPolarAngle={1.5} minDistance={180} maxDistance={5200} screenSpacePanning={false} target={[0, 0, 0]} />
+            {/* ✅ MapControls for locked-angle 2D panning */}
+      <MapControls
+        makeDefault
+        enabled={active && interactive}
+        enableRotate={false}       // 🔒 Prevents looking up/down into the sky
+        enablePan={true}           // 🖐️ Allows dragging left/right/up/down
+        enableZoom={true}          // 🔍 Allows zooming in/out
+        screenSpacePanning={true}  // Makes the drag follow your mouse perfectly
+        minDistance={400}
+        maxDistance={3500}
+        minPolarAngle={Math.PI / 3.5} 
+        maxPolarAngle={Math.PI / 3.5}
+        target={[0, 0, 0]}
+        touches={{
+          ONE: THREE.TOUCH.PAN,      // ☝️ One finger drags the map
+          TWO: THREE.TOUCH.DOLLY_PAN // ✌️ Two fingers zoom
+        }}
+      />
       <FocusOnPlayer active={active && interactive} focus={playerFocus} />
 
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -48, 0]}>
