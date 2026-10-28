@@ -109,7 +109,7 @@ export const FURNITURE_INTERACTIONS: Record<string, FurnitureInteraction[]> = {
   "utility-washing-machine": [
     { label: "Do laundry", emoji: "🧺", need: "hygiene", amount: 35 },
   ],
-  "generator": [
+  "solar": [
     { label: "Turn on", emoji: "⚡", need: "fun", amount: 5 },
   ],
   "standing-fan": [

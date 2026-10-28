@@ -10,7 +10,7 @@ export type FurnitureCategory =
 
 export type FurnitureModelId =
   | "mattress" | "bed" | "wardrobe" | "fan" | "sofa" | "chair" | "table"
-  | "tv" | "dining" | "fridge" | "cooker" | "washer" | "generator"
+  | "tv" | "dining" | "fridge" | "cooker" | "washer" | "solar"
   | "rug" | "dispenser" | "plant"
   | "bucket" | "water-drum" | "toilet" | "rain-shower"
   | "baby-bath" | "bathtub" | "jacuzzi";
@@ -54,22 +54,23 @@ export const FURNITURE_CATALOG: FurnitureItem[] = [
   { id: "foam-mattress", name: "Foam mattress", emoji: "🛏️", category: "Sleep", price: 35000, w: 2, d: 3, model: "mattress", kinds: ["bedroom", "studio", "living"] },
   { id: "double-bed", name: "Double bed", emoji: "🛌", category: "Sleep", price: 120000, w: 3, d: 4, model: "bed", kinds: ["bedroom", "studio", "living"] },
   { id: "wardrobe", name: "Wardrobe", emoji: "🚪", category: "Sleep", price: 85000, w: 2, d: 1, model: "wardrobe", kinds: ["bedroom", "studio", "living"] },
+  { id: "chair", name: "Office chair", emoji: "💺", category: "Sleep", price: 50000, w: 1, d: 1, model: "chair", kinds: ["living", "studio"] },
 
   // ── LIVING ──
   { id: "sofa", name: "3-seater sofa", emoji: "🛋️", category: "Living", price: 150000, w: 1, d: 2, model: "sofa", kinds: ["living", "studio"] },
-  { id: "chair", name: "Office chair", emoji: "💺", category: "Living", price: 50000, w: 1, d: 1, model: "chair", kinds: ["living", "studio"] },
   { id: "centre-table", name: "Centre table", emoji: "🪵", category: "Living", price: 30000, w: 2, d: 1, model: "table", kinds: ["living", "studio"] },
   { id: "tv-stand", name: "TV and stand", emoji: "📺", category: "Living", price: 180000, w: 1, d: 1, model: "tv", kinds: ["living", "studio", "bedroom"] },
-  { id: "dining-set", name: "Dining set", emoji: "🍽️", category: "Living", price: 110000, w: 1, d: 3, model: "dining", kinds: ["living", "kitchen", "studio"] },
+  
 
   // ── KITCHEN ──
   { id: "gas-cooker", name: "Gas cooker", emoji: "🔥", category: "Kitchen", price: 60000, w: 1, d: 1, model: "cooker", kinds: ["kitchen", "studio", "utility"] },
   { id: "refrigerator", name: "Refrigerator", emoji: "🧊", category: "Kitchen", price: 180000, w: 1, d: 1, model: "fridge", kinds: ["kitchen", "studio", "living"] },
   { id: "water-dispenser", name: "Water dispenser", emoji: "🚰", category: "Kitchen", price: 70000, w: 1, d: 1, model: "dispenser", kinds: ["kitchen", "living", "studio"] },
+  { id: "dining-set", name: "Dining set", emoji: "🍽️", category: "Kitchen", price: 110000, w: 1, d: 3, model: "dining", kinds: ["living", "kitchen", "studio"] },
 
   // ── UTILITY ──
   { id: "utility-washing-machine", name: "Washing machine", emoji: "🧺", category: "Utility", price: 200000, w: 1, d: 1, model: "washer", kinds: ["utility", "kitchen", "studio", "bathroom"] },
-  { id: "generator", name: "Small generator", emoji: "⚡", category: "Utility", price: 65000, w: 1, d: 1, model: "generator", kinds: ["utility", "balcony", "studio", "kitchen"] },
+  { id: "solar", name: "Solar", emoji: "⚡", category: "Utility", price: 65000, w: 1, d: 1, model: "solar", kinds: ["utility", "balcony", "studio", "kitchen"] },
   { id: "standing-fan", name: "Standing fan", emoji: "🌀", category: "Utility", price: 25000, w: 1, d: 1, model: "fan", kinds: ["bedroom", "studio", "living", "kitchen"] },
 
   // ── BATHROOM ──
@@ -101,8 +102,8 @@ export function footprint(item: FurnitureItem, rotation: Rotation): { w: number;
 export function roomTiles(room: ApartmentRoom): { cols: number; rows: number } {
   const tile = room.tileSize ?? DEFAULT_TILE_SIZE;
   return {
-    cols: Math.max(1, room.gridCols ?? Math.floor(room.width / tile + 1e-6)),
-    rows: Math.max(1, room.gridRows ?? Math.floor(room.depth / tile + 1e-6)),
+    cols: Math.max(1, Math.round(room.width / tile)),
+    rows: Math.max(1, Math.round(room.depth / tile)),
   };
 }
 
@@ -160,6 +161,7 @@ export function validateFurniturePlacement(
 
   return { ok: true };
 }
+
 
 export function findSpot(layout: ApartmentLayout, placed: PlacedFurniture[], item: FurnitureItem): Omit<PlacedFurniture, "uid" | "itemId"> | null {
   const rotations: Rotation[] = item.w === item.d ? [0] : [0, 1, 2, 3];
