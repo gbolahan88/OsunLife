@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft, ShoppingBag, X, RotateCw, ArrowUp, ArrowDown,
   ArrowLeft as ArrowLeftIcon, ArrowRight, Check,
 } from "lucide-react";
-import Apartment from "@/components/game/Apartment";
+import Apartment, { type InteractionRequest } from "@/components/game/Apartment";
 import BridgeShelter from "@/components/game/BridgeShelter";
 import { getApartmentLayout } from "@/lib/apartmentConfig";
 import { formatNaira } from "@/lib/format";
@@ -33,6 +33,8 @@ type HomeInteriorProps = {
   onEditingChange?: (editing: boolean) => void;
 };
 
+type PendingAction = { uid: string; need: NeedKey; amount: number };
+
 export default function HomeInterior({
   buildingName, housing, furniture, loan, cash,
   appearance = DEFAULT_CHARACTER_APPEARANCE, isNight = false,
@@ -44,6 +46,12 @@ export default function HomeInterior({
   const [placementNotice, setPlacementNotice] = useState<string | null>(null);
   const [interactionUid, setInteractionUid] = useState<string | null>(null);
   const [shelterInfoOpen, setShelterInfoOpen] = useState(false);
+
+  // "Walk to the furniture, then do the task" state
+  const [interactionRequest, setInteractionRequest] = useState<InteractionRequest | null>(null);
+  const pendingActionRef = useRef<PendingAction | null>(null);
+  const requestToken = useRef(0);
+  const [toast, setToast] = useState<string | null>(null);
 
   const moveFurniture = useGameStore((s) => s.moveFurniture);
   const rotateFurniture = useGameStore((s) => s.rotateFurniture);
@@ -76,7 +84,7 @@ export default function HomeInterior({
     return result.ok;
   })();
 
-  // ✅ Deferred + change-guarded edit-mode notifier.
+  // Deferred + change-guarded edit-mode notifier.
   // This prevents "unmount during render" / removeChild errors.
   const wasEditingRef = useRef<boolean | null>(null);
   useEffect(() => {
@@ -88,6 +96,13 @@ export default function HomeInterior({
     });
   }, [buyMode, selectedUid, onEditingChange]);
 
+  // Auto-hide the toast
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 3500);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+
   const title = layout ? buildingName : "Under the Okefia Flyover";
   const subtitle = layout ? layout.name : "No home yet";
 
@@ -95,6 +110,7 @@ export default function HomeInterior({
     setBuyMode(false);
     setSelectedUid(null);
     setPlacementNotice(null);
+    pendingActionRef.current = null;
   }
 
   function moveSelected(dx: number, dy: number) {
@@ -126,12 +142,30 @@ export default function HomeInterior({
     setPlacementNotice(result.ok ? null : result.reason ?? "Cannot place.");
   }
 
+  // Step 1: the player picked an action. Send the character to the furniture.
   function performInteraction(need: NeedKey, amount: number) {
     if (!interactionUid) return;
-    const result = applyFurniture(interactionUid, need, amount);
-    setPlacementNotice(result.ok ? null : result.reason ?? "Cannot use this.");
-    if (result.ok) setInteractionUid(null);
+    pendingActionRef.current = { uid: interactionUid, need, amount };
+    requestToken.current += 1;
+    setInteractionRequest({ token: requestToken.current, uid: interactionUid });
+    setInteractionUid(null);
+    setPlacementNotice(null);
   }
+
+  // Step 2: the character arrived and is sitting / lying / inside / at it. Now apply the need.
+  const handleInteractionArrived = useCallback((uid: string) => {
+    const pending = pendingActionRef.current;
+    if (!pending || pending.uid !== uid) return;
+    pendingActionRef.current = null;
+    const result = applyFurniture(pending.uid, pending.need, pending.amount);
+    if (!result.ok) setToast(result.reason ?? "Cannot use this.");
+  }, [applyFurniture]);
+
+  // The character could not find a way to the furniture (walled off or surrounded)
+  const handleInteractionBlocked = useCallback((uid: string) => {
+    if (pendingActionRef.current?.uid === uid) pendingActionRef.current = null;
+    setToast("Can't reach that. Something is blocking the way.");
+  }, []);
 
   return (
     <>
@@ -153,6 +187,9 @@ export default function HomeInterior({
             movingUid={buyMode ? selectedUid : null}
             editingMode={buyMode || !!selectedUid}
             movingIsValid={isValid}
+            interactionRequest={interactionRequest}
+            onInteractionArrived={handleInteractionArrived}
+            onInteractionBlocked={handleInteractionBlocked}
           />
         ) : (
           <BridgeShelter />
@@ -160,6 +197,16 @@ export default function HomeInterior({
       </div>
 
       <div className="pointer-events-none absolute inset-0 z-10">
+        {toast && (
+          <div
+            role="status"
+            className="pointer-events-auto absolute left-1/2 top-[calc(env(safe-area-inset-top)+10rem)] z-50 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-3 rounded-full border border-white/80 bg-white/95 px-4 py-2.5 text-xs font-bold text-[#b44235] shadow-lg"
+          >
+            <span className="truncate">{toast}</span>
+            <button type="button" onClick={() => setToast(null)} aria-label="Dismiss" className="shrink-0 text-[#718276]">×</button>
+          </div>
+        )}
+
         {!buyMode && !selectedUid && (
           <div className="pointer-events-none absolute left-3 top-[calc(env(safe-area-inset-top)+7rem)] flex max-w-[calc(100%-1.5rem)] items-center gap-2 sm:left-4">
             <button
