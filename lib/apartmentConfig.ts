@@ -122,7 +122,7 @@ const TWO_BEDROOM_LAYOUT: ApartmentLayout = {
   id: "two-bedroom", name: "2-bedroom flat",
   rooms: TWO_BEDROOM_ROOMS, walls: TWO_BEDROOM_WALLS, openings: TWO_BEDROOM_OPENINGS,
   floorBounds: boundsOf(TWO_BEDROOM_ROOMS),
-  camera: { target: [0, 0, 5], zoom: 33 },
+  camera: { target: [0, 0, 5], zoom: 32 },
 };
 
 /* ========================================================================== */

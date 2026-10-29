@@ -12,6 +12,7 @@ import FurnitureShop from "@/components/game/FurnitureShop";
 import MapTasks from "@/components/game/MapTasks";
 import PhonePopup from "@/components/game/PhonePopup";
 import RentPopup from "@/components/Rentpopup";
+import { MultiplayerProvider } from "@/components/multiplayer/MultiplayerProvider";
 import { SAVE_KEY_PREFIX, useGameStore } from "@/store/gameStore";
 import { MAP_TASKS } from "@/lib/mapTasks";
 import { formatNaira } from "@/lib/format";
@@ -40,8 +41,19 @@ function loadAppearance(username: string): CharacterAppearance {
   }
 }
 
-export default function GameApp({ username }: { username: string }) {
+export default function GameApp({
+  username,
+  userId,
+  supabaseUrl,
+  supabaseKey,
+}: {
+  username: string;
+  userId: string;
+  supabaseUrl: string;
+  supabaseKey: string;
+}) {
   const [tab, setTab] = useState<Tab>("map");
+  const [phoneOpen, setPhoneOpen] = useState(false);
   const [lastBuilding, setLastBuilding] = useState("Tobi's House");
   const [lastBuildingId, setLastBuildingId] = useState("home");
   const [loadedUsername, setLoadedUsername] = useState<string | null>(null);
@@ -116,7 +128,7 @@ export default function GameApp({ username }: { username: string }) {
     setAppearance((prev) => ({ ...prev, [key]: value }));
   };
 
-  // ✅ Stable callback — never fires during render
+  // Stable callback: never fires during render
   const handleEditingChange = useCallback((editing: boolean) => {
     setIsEditingFurniture(editing);
   }, []);
@@ -129,7 +141,20 @@ export default function GameApp({ username }: { username: string }) {
     return () => window.clearTimeout(timeout);
   }, [taskNotice]);
 
+  // A new chat message arrived from another player
+  const handleIncomingMessage = useCallback((from: string, body: string) => {
+    const preview = body.length > 60 ? `${body.slice(0, 60)}…` : body;
+    setTaskNotice(`💬 ${from}: ${preview}`);
+  }, []);
+
   function handleTabChange(newTab: Tab) {
+    // The phone is an overlay, so the map or building stays behind it
+    if (newTab === "phone") {
+      setPhoneOpen((open) => !open);
+      return;
+    }
+    setPhoneOpen(false);
+
     if (newTab === "buy") {
       // Inside home: internal Buy Mode handles it, do nothing here
       if (tab === "home") return;
@@ -151,177 +176,201 @@ export default function GameApp({ username }: { username: string }) {
   const phase = getDayPhase(clock.hour);
   const mood = getMood(needs);
 
+  // Where other players see you: "map", a building id, or "private" (home, shop)
+  const place =
+    tab === "map"
+      ? "map"
+      : tab === "home"
+        ? lastBuildingId === "home" || lastBuildingId === "okefia"
+          ? "private"
+          : lastBuildingId
+        : "private";
+
   return (
-    <div className="flex h-dvh w-full flex-col">
-      <div className="relative h-full overflow-hidden bg-[var(--bg)]">
-        <DayNightOverlay phase={phase} />
+    <MultiplayerProvider
+      supabaseUrl={supabaseUrl}
+      supabaseKey={supabaseKey}
+      userId={userId}
+      username={username}
+      appearance={appearance}
+      place={place}
+      onIncomingMessage={handleIncomingMessage}
+    >
+      <div className="flex h-dvh w-full flex-col">
+        <div className="relative h-full overflow-hidden bg-[var(--bg)]">
+          <DayNightOverlay phase={phase} />
 
-        <Hud
-          time={formatClock(clock)}
-          mood={mood.label}
-          moodEmoji={mood.emoji}
-          cash={cash}
-          isNight={phase === "night"}
-          username={username}
-        />
-
-        {tab === "map" && (
-          <OsogboWorld
-            active={true}
-            appearance={appearance}
-            onEnterBuilding={(buildingName, buildingId) => {
-              const task = MAP_TASKS.find(
-                (entry) => entry.targetBuildingId === buildingId
-              );
-              if (task) {
-                const result = completeMapTask(task.id, Date.now());
-                setTaskNotice(
-                  result.ok
-                    ? `${task.title}: +${formatNaira(task.reward)}`
-                    : result.reason
-                );
-              }
-              setLastBuilding(buildingName);
-              setLastBuildingId(buildingId);
-              setTab("home");
-            }}
-          />
-        )}
-
-        {tab === "map" && (
-          <MapTasks completedTasks={completedTasks} now={now} />
-        )}
-
-        {tab === "buy" && (
-          <FurnitureShop
+          <Hud
+            time={formatClock(clock)}
+            mood={mood.label}
+            moodEmoji={mood.emoji}
             cash={cash}
-            housing={housing}
-            furniture={furniture}
-            onBuy={buyFurniture}
-            onSell={sellFurniture}
-            onFindHome={() => setIsRentOpen(true)}
-            onClose={() => setTab("map")}
+            isNight={phase === "night"}
+            username={username}
           />
-        )}
 
-        {tab === "home" &&
-          (lastBuildingId === "home" || lastBuildingId === "okefia") && (
-            <HomeInterior
-              key={lastBuildingId}
-              buildingName={lastBuilding}
+          {tab === "map" && (
+            <OsogboWorld
+              active={true}
+              appearance={appearance}
+              onEnterBuilding={(buildingName, buildingId) => {
+                const task = MAP_TASKS.find(
+                  (entry) => entry.targetBuildingId === buildingId
+                );
+                if (task) {
+                  const result = completeMapTask(task.id, Date.now());
+                  setTaskNotice(
+                    result.ok
+                      ? `${task.title}: +${formatNaira(task.reward)}`
+                      : result.reason
+                  );
+                }
+                setLastBuilding(buildingName);
+                setLastBuildingId(buildingId);
+                setTab("home");
+              }}
+            />
+          )}
+
+          {tab === "map" && (
+            <MapTasks completedTasks={completedTasks} now={now} />
+          )}
+
+          {tab === "buy" && (
+            <FurnitureShop
+              cash={cash}
               housing={housing}
               furniture={furniture}
-              loan={loan}
-              cash={cash}
-              appearance={appearance}
-              isNight={phase === "night"}
-              onExit={() => setTab("map")}
+              onBuy={buyFurniture}
+              onSell={sellFurniture}
               onFindHome={() => setIsRentOpen(true)}
-              onRepayLoan={repayLoan}
-              onEditingChange={handleEditingChange}
+              onClose={() => setTab("map")}
             />
           )}
 
-        {tab === "home" &&
-          lastBuildingId !== "home" &&
-          lastBuildingId !== "okefia" && (
-            <BuildingInterior
-              key={lastBuildingId}
-              buildingId={lastBuildingId}
-              buildingName={lastBuilding}
-              onExit={() => setTab("map")}
+          {tab === "home" &&
+            (lastBuildingId === "home" || lastBuildingId === "okefia") && (
+              <HomeInterior
+                key={lastBuildingId}
+                buildingName={lastBuilding}
+                housing={housing}
+                furniture={furniture}
+                loan={loan}
+                cash={cash}
+                appearance={appearance}
+                isNight={phase === "night"}
+                onExit={() => setTab("map")}
+                onFindHome={() => setIsRentOpen(true)}
+                onRepayLoan={repayLoan}
+                onEditingChange={handleEditingChange}
+              />
+            )}
+
+          {tab === "home" &&
+            lastBuildingId !== "home" &&
+            lastBuildingId !== "okefia" && (
+              <BuildingInterior
+                key={lastBuildingId}
+                buildingId={lastBuildingId}
+                buildingName={lastBuilding}
+                onExit={() => setTab("map")}
+                onOpenPhone={() => setPhoneOpen(true)}
+              />
+            )}
+
+          {isShopOpen && (
+            <FurnitureShop
+              cash={cash}
+              housing={housing}
+              furniture={furniture}
+              onBuy={buyFurniture}
+              onSell={sellFurniture}
+              onFindHome={() => {
+                setIsShopOpen(false);
+                setIsRentOpen(true);
+              }}
+              onClose={() => setIsShopOpen(false)}
             />
           )}
 
-        {isShopOpen && (
-          <FurnitureShop
-            cash={cash}
-            housing={housing}
-            furniture={furniture}
-            onBuy={buyFurniture}
-            onSell={sellFurniture}
-            onFindHome={() => {
-              setIsShopOpen(false);
-              setIsRentOpen(true);
-            }}
-            onClose={() => setIsShopOpen(false)}
-          />
-        )}
-
-        {(housing === "undecided" || isRentOpen) && (
-          <RentPopup
-            cash={cash}
-            loanTaken={loanTaken}
-            canClose={housing !== "undecided"}
-            onRent={(planId, takeLoan) => {
-              const result = rentHome(planId, takeLoan);
-              if (result.ok) {
+          {(housing === "undecided" || isRentOpen) && (
+            <RentPopup
+              cash={cash}
+              loanTaken={loanTaken}
+              canClose={housing !== "undecided"}
+              onRent={(planId, takeLoan) => {
+                const result = rentHome(planId, takeLoan);
+                if (result.ok) {
+                  setIsRentOpen(false);
+                  setLastBuilding("Your home");
+                  setLastBuildingId("home");
+                  setTab("home");
+                }
+                return result;
+              }}
+              onSleepRough={() => {
+                sleepRough();
                 setIsRentOpen(false);
-                setLastBuilding("Your home");
-                setLastBuildingId("home");
+                setLastBuilding("Under the Okefia Flyover");
+                setLastBuildingId("okefia");
                 setTab("home");
-              }
-              return result;
-            }}
-            onSleepRough={() => {
-              sleepRough();
-              setIsRentOpen(false);
-              setLastBuilding("Under the Okefia Flyover");
-              setLastBuildingId("okefia");
-              setTab("home");
-            }}
-            onClose={() => setIsRentOpen(false)}
-          />
-        )}
+              }}
+              onClose={() => setIsRentOpen(false)}
+            />
+          )}
 
-        {!isEditingFurniture && (
-          <NeedsPanel
-            needs={needs}
-            appearance={appearance}
-            onProfileClick={() => setIsProfileOpen(true)}
-          />
-        )}
+          {!isEditingFurniture && (
+            <NeedsPanel
+              needs={needs}
+              appearance={appearance}
+              onProfileClick={() => setIsProfileOpen(true)}
+            />
+          )}
 
-        {isProfileOpen && (
-          <PlayerProfilePopup
-            username={username}
-            cash={cash}
-            needs={needs}
-            appearance={appearance}
-            onUpdateAppearance={handleUpdateAppearance}
-            onClose={() => setIsProfileOpen(false)}
-          />
-        )}
+          {isProfileOpen && (
+            <PlayerProfilePopup
+              username={username}
+              cash={cash}
+              needs={needs}
+              appearance={appearance}
+              onUpdateAppearance={handleUpdateAppearance}
+              onClose={() => setIsProfileOpen(false)}
+            />
+          )}
 
-        {taskNotice && (
-          <div
-            role="status"
-            className="absolute left-1/2 top-24 z-50 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-3 rounded-full border border-white/80 bg-white/95 px-4 py-2.5 text-xs font-bold text-[#26724f] shadow-lg"
-          >
-            <span className="truncate">{taskNotice}</span>
-            <button
-              type="button"
-              onClick={() => setTaskNotice(null)}
-              aria-label="Dismiss notice"
-              className="shrink-0 text-[#718276]"
+          {taskNotice && (
+            <div
+              role="status"
+              className="absolute left-1/2 top-24 z-50 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-3 rounded-full border border-white/80 bg-white/95 px-4 py-2.5 text-xs font-bold text-[#26724f] shadow-lg"
             >
-              ×
-            </button>
-          </div>
-        )}
+              <span className="truncate">{taskNotice}</span>
+              <button
+                type="button"
+                onClick={() => setTaskNotice(null)}
+                aria-label="Dismiss notice"
+                className="shrink-0 text-[#718276]"
+              >
+                ×
+              </button>
+            </div>
+          )}
 
-        {tab === "phone" && (
-          <PhonePopup
-            username={username}
-            cash={cash}
-            onClose={() => setTab("map")}
-          />
-        )}
+          {phoneOpen && (
+            <PhonePopup
+              username={username}
+              cash={cash}
+              onClose={() => setPhoneOpen(false)}
+            />
+          )}
 
-        {!isEditingFurniture && (
-          <BottomNav active={tab} onChange={handleTabChange} />
-        )}
+          {!isEditingFurniture && (
+            <BottomNav
+              active={phoneOpen ? "phone" : tab}
+              onChange={handleTabChange}
+            />
+          )}
+        </div>
       </div>
-    </div>
+    </MultiplayerProvider>
   );
 }

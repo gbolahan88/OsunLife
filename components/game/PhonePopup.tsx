@@ -19,6 +19,8 @@ import {
   Wallet,
   X,
 } from "lucide-react";
+import { useMultiplayer } from "@/components/multiplayer/MultiplayerProvider";
+import { ContactsApp, MessagesApp } from "@/components/game/MessagesApp";
 
 type PhoneApp = {
   id: string;
@@ -48,7 +50,7 @@ const PHONE_APPS: PhoneApp[] = [
     name: "Messages",
     Icon: MessageCircle,
     color: "#20b86a",
-    description: "Your messages and conversations will appear here.",
+    description: "Chat with other players.",
   },
   {
     id: "invest",
@@ -76,7 +78,7 @@ const PHONE_APPS: PhoneApp[] = [
     name: "Contacts",
     Icon: Smartphone,
     color: "#2684ff",
-    description: "Your contacts will appear here.",
+    description: "Players who are online right now.",
   },
   {
     id: "camera",
@@ -115,7 +117,7 @@ const PHONE_APPS: PhoneApp[] = [
   },
 ];
 
-const DOCK_APPS = ["phone", "messages", "camera", "settings"];
+const DOCK_APPS = ["contacts", "messages", "camera", "settings"];
 
 export default function PhonePopup({
   username,
@@ -126,9 +128,15 @@ export default function PhonePopup({
   cash: number;
   onClose: () => void;
 }) {
-  const [activeApp, setActiveApp] = useState<string | null>(null);
+  const { activeThread, openThread, unreadTotal } = useMultiplayer();
+  // If a player was tapped in the world, open straight into their chat
+  const [activeApp, setActiveApp] = useState<string | null>(() =>
+    activeThread ? "messages" : null
+  );
 
   const selectedApp = PHONE_APPS.find((app) => app.id === activeApp);
+  const inThread = activeApp === "messages" && !!activeThread;
+  const usesFlexBody = activeApp === "messages";
 
   const formatMoney = (amount: number) =>
     new Intl.NumberFormat("en-NG", {
@@ -137,7 +145,24 @@ export default function PhonePopup({
       maximumFractionDigits: 0,
     }).format(amount);
 
+  function goBack() {
+    if (inThread) {
+      openThread(null);
+      return;
+    }
+    setActiveApp(null);
+  }
+
+  function goHome() {
+    openThread(null);
+    setActiveApp(null);
+  }
+
   function renderAppContent(app: PhoneApp) {
+    if (app.id === "contacts") {
+      return <ContactsApp />;
+    }
+
     if (app.id === "bank" || app.id === "wallet") {
       return (
         <div className="mt-5 rounded-3xl bg-white p-5 text-[#263d31] shadow-sm">
@@ -275,8 +300,8 @@ export default function PhonePopup({
                 <div className="relative z-10 flex shrink-0 items-center gap-3 px-4 pb-3 pt-1">
                   <button
                     type="button"
-                    onClick={() => setActiveApp(null)}
-                    aria-label="Back to phone home screen"
+                    onClick={goBack}
+                    aria-label={inThread ? "Back to chats" : "Back to phone home screen"}
                     className="flex h-9 w-9 items-center justify-center rounded-full bg-white/85 text-[#263d31] shadow-sm"
                   >
                     <ArrowLeft size={18} />
@@ -286,14 +311,20 @@ export default function PhonePopup({
                       Osun Life Phone
                     </p>
                     <h2 className="truncate text-lg font-extrabold text-[#263d31]">
-                      {selectedApp.name}
+                      {inThread && activeThread ? activeThread.username : selectedApp.name}
                     </h2>
                   </div>
                 </div>
 
-                <div className="relative z-10 flex-1 overflow-y-auto px-4 pb-4">
-                  {renderAppContent(selectedApp)}
-                </div>
+                {usesFlexBody ? (
+                  <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-4">
+                    <MessagesApp />
+                  </div>
+                ) : (
+                  <div className="relative z-10 flex-1 overflow-y-auto px-4 pb-4">
+                    {renderAppContent(selectedApp)}
+                  </div>
+                )}
               </>
             ) : (
               <>
@@ -322,10 +353,15 @@ export default function PhonePopup({
                       className="group flex min-w-0 flex-col items-center gap-1.5 rounded-xl text-center focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#26724f]"
                     >
                       <span
-                        className="flex h-[52px] w-[52px] items-center justify-center rounded-[16px] text-white shadow-[0_5px_12px_rgba(32,55,42,0.17)] transition-transform duration-150 group-hover:-translate-y-1 group-active:scale-95"
+                        className="relative flex h-[52px] w-[52px] items-center justify-center rounded-[16px] text-white shadow-[0_5px_12px_rgba(32,55,42,0.17)] transition-transform duration-150 group-hover:-translate-y-1 group-active:scale-95"
                         style={{ backgroundColor: app.color }}
                       >
                         <app.Icon size={25} strokeWidth={2.1} />
+                        {app.id === "messages" && unreadTotal > 0 && (
+                          <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white bg-[#f04462] px-1 text-[10px] font-extrabold">
+                            {unreadTotal}
+                          </span>
+                        )}
                       </span>
                       <span className="max-w-full truncate text-[10px] font-bold text-[#243d2d] [text-shadow:0_1px_8px_rgba(255,255,255,0.7)]">
                         {app.name}
@@ -348,10 +384,15 @@ export default function PhonePopup({
                           type="button"
                           onClick={() => setActiveApp(id)}
                           aria-label={`Open ${app.name}`}
-                          className="flex h-[49px] w-[49px] items-center justify-center rounded-[15px] text-white shadow-sm transition-transform hover:-translate-y-1"
+                          className="relative flex h-[49px] w-[49px] items-center justify-center rounded-[15px] text-white shadow-sm transition-transform hover:-translate-y-1"
                           style={{ backgroundColor: app.color }}
                         >
                           <DockIcon size={25} />
+                          {id === "messages" && unreadTotal > 0 && (
+                            <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white bg-[#f04462] px-1 text-[10px] font-extrabold">
+                              {unreadTotal}
+                            </span>
+                          )}
                         </button>
                       );
                     })}
@@ -362,7 +403,7 @@ export default function PhonePopup({
 
             <button
               type="button"
-              onClick={() => setActiveApp(null)}
+              onClick={goHome}
               aria-label="Return to phone home screen"
               title="Home"
               className="relative z-10 mx-auto mb-2 mt-auto h-1 w-[100px] shrink-0 rounded-full bg-[#263d31]/70"

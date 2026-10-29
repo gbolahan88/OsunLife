@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Moon, Sun, UserRound, Volume2, VolumeX } from "lucide-react";
 import { formatNaira } from "@/lib/format";
+import { useMultiplayer } from "@/components/multiplayer/MultiplayerProvider";
 
 type HudProps = {
   time: string;
@@ -22,6 +23,7 @@ export default function Hud({
   username,
 }: HudProps) {
   const [muted, setMuted] = useState(false);
+  const { onlineCount } = useMultiplayer();
 
   return (
     <header className="pointer-events-none absolute inset-x-0 top-0 z-20 px-3 pt-[calc(env(safe-area-inset-top)+12px)]">
@@ -54,7 +56,7 @@ export default function Hud({
 
             <span className="whitespace-nowrap text-[13px]">
               <span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#20b978]" />
-              1 online
+              {onlineCount} online
             </span>
           </div>
 
@@ -95,7 +97,7 @@ export default function Hud({
 
           <span className="flex items-center gap-1.5 whitespace-nowrap">
             <span className="inline-block h-2 w-2 rounded-full bg-[#20b978]" />
-            <span>1 online</span>
+            <span>{onlineCount} online</span>
           </span>
         </div>
       </div>

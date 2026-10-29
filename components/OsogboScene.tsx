@@ -2,7 +2,7 @@
 
 import { Html, OrbitControls, MapControls } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
 import type { Group, InstancedMesh } from "three";
 import { getGameClock } from "@/lib/time";
@@ -14,6 +14,10 @@ import {
   buildAvatarUrl,
 } from "@/store/characterAppearance";
 import CharacterModel from "@/components/game/CharacterModel";
+import BuildingSheet from "@/components/BuildingSheet";
+import { TRANSPORT_MODES, type TransportId } from "@/lib/buildingInfo";
+import { MAP_TASKS, MAP_TASK_COOLDOWN_MS } from "@/lib/mapTasks";
+
 
 type Point = { x: number; y: number };
 type Home = Point & { floors: number; roof: string };
@@ -1929,56 +1933,101 @@ function Landmark({ building, selected, onVisit }: {
   );
 }
 
+function buildingPoint(building: Building): Point {
+  return {
+    x: building.x + building.width / 2,
+    y: building.y + building.depth + 35,
+  };
+}
+
+const HOME_POINT = buildingPoint(HOME_BUILDING);
+
+type Travel = {
+  token: number;
+  buildingId: string;
+  speed: number;
+  onFoot: boolean;
+};
+
 function AnimatedPlayer({
   destination,
   appearance,
+  speed,
+  onFoot,
+  travelToken,
+  onArrive,
 }: {
   destination: Point;
   appearance: CharacterAppearance;
+  speed: number;
+  onFoot: boolean;
+  travelToken: number | null;
+  onArrive: (token: number) => void;
 }) {
   const playerRef = useRef<Group>(null);
   const step = useRef(0);
-  const logCounter = useRef(0);
+  const pendingToken = useRef<number | null>(null);
+  const movingRef = useRef(false);
+  const [moving, setMoving] = useState(false);
+  // Start where the player begins; later moves are animated, never teleported
+  const [startPosition] = useState(() => worldPosition(destination.x, destination.y));
   const target = useMemo(
     () => new THREE.Vector3(...worldPosition(destination.x, destination.y, 0)),
     [destination]
   );
 
+  useEffect(() => {
+    pendingToken.current = travelToken;
+  }, [travelToken]);
+
   useFrame((_, delta) => {
     const player = playerRef.current;
     if (!player) return;
 
-    const distance = player.position.distanceTo(target);
-    player.position.lerp(target, 1 - Math.exp(-delta * 2.7));
+    const dx = target.x - player.position.x;
+    const dz = target.z - player.position.z;
+    const distance = Math.hypot(dx, dz);
 
-    step.current += delta * (distance > 8 ? 12 : 2);
-    player.position.y = Math.abs(Math.sin(step.current)) * (distance > 8 ? 2 : 0.5);
+    if (distance > 3) {
+      // Constant speed toward the destination
+      const stepLength = Math.min(distance, speed * delta);
+      player.position.x += (dx / distance) * stepLength;
+      player.position.z += (dz / distance) * stepLength;
+      player.rotation.y = Math.atan2(dx, dz);
 
-    if (distance > 2) {
-      const dirX = target.x - player.position.x;
-      const dirZ = target.z - player.position.z;
-      player.rotation.y = Math.atan2(dirX, dirZ);
-    }
+      step.current += delta * (onFoot ? 10 : 16);
+      player.position.y = Math.abs(Math.sin(step.current)) * (onFoot ? 1.2 : 0.6);
 
-    // Log every ~60 frames (about once per second)
-    logCounter.current += 1;
-    if (logCounter.current % 60 === 0) {
-      console.log("[AnimatedPlayer] position", {
-        x: player.position.x.toFixed(1),
-        y: player.position.y.toFixed(1),
-        z: player.position.z.toFixed(1),
-        targetX: target.x.toFixed(1),
-        targetZ: target.z.toFixed(1),
-      });
+      if (!movingRef.current) {
+        movingRef.current = true;
+        setMoving(true);
+      }
+    } else {
+      player.position.x = target.x;
+      player.position.z = target.z;
+      player.position.y = 0;
+
+      if (movingRef.current) {
+        movingRef.current = false;
+        setMoving(false);
+      }
+
+      // Arrived: tell the parent once per trip
+      if (pendingToken.current !== null) {
+        const token = pendingToken.current;
+        pendingToken.current = null;
+        onArrive(token);
+      }
     }
   });
 
   return (
-    <group ref={playerRef} position={worldPosition(destination.x, destination.y)}>
+    <group ref={playerRef} position={startPosition}>
       <CharacterModel
         key={`map-player-${appearance.skin}-${appearance.hairstyle}-${appearance.shirt}`}
         appearance={appearance}
         targetHeight={30}
+        action={moving && onFoot ? "walk" : "idle"}
       />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.3, 0]}>
         <circleGeometry args={[14, 20]} />
@@ -2238,19 +2287,20 @@ function FocusOnPlayer({ active, focus }: { active: boolean; focus: THREE.Vector
   return null;
 }
 
-function Scene({ active, interactive, hour, appearance, onVisit, onEnterBuilding }: {
+function Scene({ active, interactive, hour, appearance, selectedId, travel, onSelectBuilding, onArrive }: {
   active: boolean;
   interactive: boolean;
   hour: number;
   appearance: CharacterAppearance;
-  onVisit: (building: Building) => void;
-  onEnterBuilding: (buildingName: string, buildingId: string) => void;
+  selectedId: string | null;
+  travel: Travel | null;
+  onSelectBuilding: (building: Building) => void;
+  onArrive: (token: number) => void;
 }) {
-  const [selected, setSelected] = useState<string | null>(null);
-  const [destination, setDestination] = useState<Point>({
-    x: HOME_BUILDING.x + HOME_BUILDING.width / 2,
-    y: HOME_BUILDING.y + HOME_BUILDING.depth + 35,
-  });
+  const destination = useMemo<Point>(() => {
+    const building = travel ? PLACED_BUILDINGS.find((entry) => entry.id === travel.buildingId) : undefined;
+    return building ? buildingPoint(building) : HOME_POINT;
+  }, [travel]);
   const playerFocus = useMemo(() => new THREE.Vector3(...worldPosition(destination.x, destination.y, 0)), [destination]);
   const riverGeometry = useMemo(() => createRiverGeometry(), []);
   const grassTexture = useMemo(() => createGrassTexture(), []);
@@ -2269,34 +2319,25 @@ function Scene({ active, interactive, hour, appearance, onVisit, onEnterBuilding
     cliffGeometry.dispose();
   }, [asphaltTexture, beachGeometry, cliffGeometry, grassTexture, islandGeometry, oceanTexture]);
 
-  function visit(building: Building) {
-    setSelected(building.id);
-    setDestination({ x: building.x + building.width / 2, y: building.y + building.depth + 35 });
-    window.setTimeout(() => {
-      onVisit(building);
-      onEnterBuilding(building.name, building.id);
-    }, 0);
-  }
-
   return (
     <>
       <Atmosphere hour={hour} />
-            {/* ✅ MapControls for locked-angle 2D panning */}
+      {/* MapControls for locked-angle 2D panning */}
       <MapControls
         makeDefault
         enabled={active && interactive}
-        enableRotate={false}       // 🔒 Prevents looking up/down into the sky
-        enablePan={true}           // 🖐️ Allows dragging left/right/up/down
-        enableZoom={true}          // 🔍 Allows zooming in/out
+        enableRotate={false}       // Prevents looking up/down into the sky
+        enablePan={true}           // Allows dragging left/right/up/down
+        enableZoom={true}          // Allows zooming in/out
         screenSpacePanning={true}  // Makes the drag follow your mouse perfectly
         minDistance={400}
         maxDistance={3500}
-        minPolarAngle={Math.PI / 3.5} 
+        minPolarAngle={Math.PI / 3.5}
         maxPolarAngle={Math.PI / 3.5}
         target={[0, 0, 0]}
         touches={{
-          ONE: THREE.TOUCH.PAN,      // ☝️ One finger drags the map
-          TWO: THREE.TOUCH.DOLLY_PAN // ✌️ Two fingers zoom
+          ONE: THREE.TOUCH.PAN,      // One finger drags the map
+          TWO: THREE.TOUCH.DOLLY_PAN // Two fingers zoom
         }}
       />
       <FocusOnPlayer active={active && interactive} focus={playerFocus} />
@@ -2333,12 +2374,19 @@ function Scene({ active, interactive, hour, appearance, onVisit, onEnterBuilding
         <Landmark
           key={building.id}
           building={building}
-          selected={selected === building.id}
-          onVisit={visit}
+          selected={selectedId === building.id}
+          onVisit={onSelectBuilding}
         />
       ))}
       {BILLBOARDS.map((board) => <Billboard key={board.title} board={board} />)}
-      <AnimatedPlayer destination={destination} appearance={appearance} />
+      <AnimatedPlayer
+        destination={destination}
+        appearance={appearance}
+        speed={travel?.speed ?? 120}
+        onFoot={travel?.onFoot ?? true}
+        travelToken={travel?.token ?? null}
+        onArrive={onArrive}
+      />
     </>
   );
 }
@@ -2409,9 +2457,14 @@ export default function OsogboScene({
   onEnterBuilding: (buildingName: string, buildingId: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [selectedBuilding, setSelectedBuilding] = useState<string | null>(null);
+  const [sheetBuilding, setSheetBuilding] = useState<Building | null>(null);
+  const [travel, setTravel] = useState<Travel | null>(null);
+  const tokenRef = useRef(0);
 
   const devOffsetMs = useGameStore((state) => state.devOffsetMs);
+  const cash = useGameStore((state) => state.cash);
+  const spendCash = useGameStore((state) => state.spendCash);
+  const completedTasks = useGameStore((state) => state.completedMapTasks);
   const now = useNow(1000);
   const clock = getGameClock(now + devOffsetMs) as unknown as { hour: number; minute?: number; minutes?: number };
   const rawHour = Math.floor(clock.hour) + (clock.minute ?? clock.minutes ?? 0) / 60;
@@ -2424,36 +2477,99 @@ export default function OsogboScene({
     // Crowded-building warnings intentionally disabled — visual overlaps are acceptable.
   }, []);
 
-  return (
-    <div
-      ref={containerRef}
-      className={`absolute inset-0 z-0 ${active ? "" : "invisible pointer-events-none"} ${interactive ? "" : "pointer-events-none"}`}
-      aria-label={interactive ? "Interactive 3D map of Osogbo" : "Osogbo 3D city preview"}
-      aria-hidden={!active}
-    >
-      <Canvas
-        shadows
-        style={{ width: "100%", height: "100%" }}
-        dpr={[1, 1.5]}
-        camera={{ position: [0, 2450, 2350], rotation: [-Math.PI / 4, 0, 0], fov: 45, near: 1, far: 12000 }}
-        gl={{ antialias: true, alpha: false }}
-        onCreated={({ gl }) => {
-          gl.setClearColor("#4babc0");
-          gl.shadowMap.type = THREE.PCFShadowMap;
-        }}
-      >
-        <CanvasSizer containerRef={containerRef} />
-        <Scene
-          active={active}
-          interactive={interactive}
-          hour={hour}
-          appearance={appearance}
-          onVisit={(building) => setSelectedBuilding(building.id)}
-          onEnterBuilding={onEnterBuilding}
-        />
-      </Canvas>
+  // Where the player is now (home, or the last place they travelled to)
+  const fromPoint = useMemo<Point>(() => {
+    const building = travel ? PLACED_BUILDINGS.find((entry) => entry.id === travel.buildingId) : undefined;
+    return building ? buildingPoint(building) : HOME_POINT;
+  }, [travel]);
 
-      <span className="sr-only" aria-live="polite">{selectedBuilding ? `Selected ${selectedBuilding}` : "Osogbo map"}</span>
-    </div>
+  const sheetDistance = useMemo(() => {
+    if (!sheetBuilding) return 0;
+    const to = buildingPoint(sheetBuilding);
+    return Math.hypot(to.x - fromPoint.x, to.y - fromPoint.y);
+  }, [sheetBuilding, fromPoint]);
+
+  const sheetTask = useMemo(() => {
+    if (!sheetBuilding) return undefined;
+    const task = MAP_TASKS.find((entry) => entry.targetBuildingId === sheetBuilding.id);
+    if (!task) return undefined;
+    const ready = (completedTasks[task.id] ?? 0) + MAP_TASK_COOLDOWN_MS <= now;
+    return { title: task.title, reward: task.reward, ready };
+  }, [sheetBuilding, completedTasks, now]);
+
+  const closeSheet = useCallback(() => setSheetBuilding(null), []);
+
+  const handleGo = useCallback((modeId: TransportId) => {
+    if (!sheetBuilding) return;
+    const mode = TRANSPORT_MODES.find((entry) => entry.id === modeId);
+    if (!mode) return;
+    if (mode.price > 0 && !spendCash(mode.price)) return;
+
+    tokenRef.current += 1;
+    setTravel({
+      token: tokenRef.current,
+      buildingId: sheetBuilding.id,
+      speed: mode.speed,
+      onFoot: mode.id === "trek",
+    });
+    setSheetBuilding(null);
+  }, [sheetBuilding, spendCash]);
+
+  // The character reached the building: go inside (this also completes its task)
+  const handleArrive = useCallback((token: number) => {
+    if (!travel || travel.token !== token) return;
+    const building = PLACED_BUILDINGS.find((entry) => entry.id === travel.buildingId);
+    if (building) onEnterBuilding(building.name, building.id);
+  }, [travel, onEnterBuilding]);
+
+  return (
+    <>
+      <div
+        ref={containerRef}
+        className={`absolute inset-0 z-0 ${active ? "" : "invisible pointer-events-none"} ${interactive ? "" : "pointer-events-none"}`}
+        aria-label={interactive ? "Interactive 3D map of Osogbo" : "Osogbo 3D city preview"}
+        aria-hidden={!active}
+      >
+        <Canvas
+          shadows
+          style={{ width: "100%", height: "100%" }}
+          dpr={[1, 1.5]}
+          camera={{ position: [0, 2450, 2350], rotation: [-Math.PI / 4, 0, 0], fov: 45, near: 1, far: 12000 }}
+          gl={{ antialias: true, alpha: false }}
+          onCreated={({ gl }) => {
+            gl.setClearColor("#4babc0");
+            gl.shadowMap.type = THREE.PCFShadowMap;
+          }}
+        >
+          <CanvasSizer containerRef={containerRef} />
+          <Scene
+            active={active}
+            interactive={interactive}
+            hour={hour}
+            appearance={appearance}
+            selectedId={sheetBuilding?.id ?? null}
+            travel={travel}
+            onSelectBuilding={setSheetBuilding}
+            onArrive={handleArrive}
+          />
+        </Canvas>
+
+        <span className="sr-only" aria-live="polite">{sheetBuilding ? `Selected ${sheetBuilding.name}` : "Osogbo map"}</span>
+      </div>
+
+      {active && interactive && sheetBuilding && (
+        <BuildingSheet
+          key={sheetBuilding.id}
+          buildingId={sheetBuilding.id}
+          name={sheetBuilding.name}
+          icon={sheetBuilding.icon}
+          distance={sheetDistance}
+          cash={cash}
+          task={sheetTask}
+          onClose={closeSheet}
+          onGo={handleGo}
+        />
+      )}
+    </>
   );
 }
