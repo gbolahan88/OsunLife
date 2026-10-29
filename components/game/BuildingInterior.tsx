@@ -2,9 +2,15 @@
 
 import { ArrowLeft } from "lucide-react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
-import { useMemo, useRef } from "react";
+import { Html, OrbitControls } from "@react-three/drei";
+import { Suspense, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import CharacterModel from "@/components/game/CharacterModel";
+import {
+  useMultiplayer,
+  type RemotePlayer,
+} from "@/components/multiplayer/MultiplayerProvider";
+import { DEFAULT_CHARACTER_APPEARANCE } from "@/store/characterAppearance";
 
 type FixtureKind =
   | "desk" | "chair" | "bed" | "medical-bed" | "shelf" | "counter"
@@ -38,11 +44,27 @@ const INTERIORS: Record<string, InteriorConfig> = {
     { kind: "sofa", x: -5, z: 1, color: "#9e302b" }, { kind: "sofa", x: 5, z: 1, color: "#9e302b" },
     { kind: "table", x: 0, z: 3, color: "#a57b43" },
   ]},
-  market: { subtitle: "Oja Oba — Living marketplace", floor: "#b7a080", wall: "#e9d5ae", accent: "#c45e3f", fixtures: [
-    { kind: "stall", x: -7, z: -4, color: "#c45e3f" }, { kind: "stall", x: 0, z: -4, color: "#318578" }, { kind: "stall", x: 7, z: -4, color: "#d7a63e" },
-    { kind: "stall", x: -7, z: 3, color: "#318578" }, { kind: "stall", x: 0, z: 3, color: "#d7a63e" }, { kind: "stall", x: 7, z: 3, color: "#c45e3f" },
-    { kind: "counter", x: 0, z: -7, color: "#8a5a35" },
-  ]},
+  market: { 
+    subtitle: "Oja Oba — Living marketplace", 
+    floor: "#6b4c3a", // Dirt floor
+    wall: "#e9d5ae", 
+    accent: "#bc6345", 
+    fixtures: [
+      // Top Row
+      { kind: "stall", x: -6, z: -5, color: "#bc6345" }, // Red/Yellow canopy
+      { kind: "stall", x: 0, z: -5, color: "#28776e" },  // Green/White canopy
+      { kind: "stall", x: 6, z: -5, color: "#bc6345" },  // Red/Yellow canopy
+      
+      // Middle Row (Produce tables)
+      { kind: "table", x: -4, z: 0, color: "#5c3a21" },
+      { kind: "table", x: 4, z: 0, color: "#5c3a21" },
+      
+      // Bottom Row
+      { kind: "stall", x: -6, z: 5, color: "#d7a63e" },  // Yellow canopy
+      { kind: "stall", x: 0, z: 5, color: "#318578" },   // Green canopy
+      { kind: "stall", x: 6, z: 5, color: "#bc6345" },   // Red canopy
+    ]
+  },
   "adire-tower": { subtitle: "Adire fashion gallery", floor: "#d8c9b5", wall: "#f1e7d9", accent: "#28776e", fixtures: [
     ...[-5, 0, 5].map((x, i) => ({ kind: "clothing-rack" as const, x, z: -2, color: ["#28776e", "#c65a70", "#d39d3b"][i] })),
     ...[-6, 0, 6].map((x, i) => ({ kind: "gallery-art" as const, x, z: -6, color: ["#28776e", "#c65a70", "#d39d3b"][i] })),
@@ -95,10 +117,30 @@ const INTERIORS: Record<string, InteriorConfig> = {
     { kind: "bar", x: 0, z: -5, color: "#2fc4b2" }, ...[-6, 0, 6].map(x => ({ kind: "table" as const, x, z: 0, color: "#477c77" })),
     { kind: "sofa", x: -5, z: 4, color: "#477c77" }, { kind: "sofa", x: 5, z: 4, color: "#477c77" },
   ]},
-  "zeaus-club": { subtitle: "Zeaus Club dance floor", floor: "#211c34", wall: "#302747", accent: "#8b5cf6", fixtures: [
-    { kind: "bar", x: 0, z: -5, color: "#8b5cf6" }, ...[-6, 0, 6].map((x, i) => ({ kind: "dance-light" as const, x, z: -1, color: ["#35d9ff", "#f04f9b", "#8b5cf6"][i] })),
-    { kind: "sofa", x: -5, z: 4, color: "#4d3e68" }, { kind: "sofa", x: 5, z: 4, color: "#4d3e68" },
-  ]},
+  // Fixed: this key was "zeus-club", which never matched the building id "zeus-club"
+  "zeus-club": { 
+    subtitle: "Zeus Club dance floor", 
+    floor: "#0a0a0f", 
+    wall: "#1a1a2e", 
+    accent: "#8b5cf6", 
+    fixtures: [
+      // DJ Booth & Screen
+      { kind: "counter", x: 0, z: -7, color: "#2b2740" }, 
+      { kind: "shelf", x: -4, z: -7.5, color: "#111" },
+      { kind: "shelf", x: 4, z: -7.5, color: "#111" },
+      
+      // Dance Lights
+      ...[-6, 0, 6].map((x, i) => ({ kind: "dance-light" as const, x, z: -2, color: ["#35d9ff", "#f04f9b", "#8b5cf6"][i] })),
+      
+      // The Bar
+      { kind: "bar", x: -8, z: 0, color: "#8b5cf6", rotation: Math.PI / 4 },
+      
+      // Lounge Area (Red Sofas)
+      { kind: "sofa", x: 7, z: 2, color: "#8b0000", rotation: -Math.PI / 4 }, 
+      { kind: "sofa", x: 9, z: 4, color: "#8b0000", rotation: -Math.PI / 4 },
+      { kind: "table", x: 7, z: 5, color: "#1a1a2e" },
+    ]
+  },
   olaiya: { subtitle: "Olaiya Flyover rest point", floor: "#888a86", wall: "#d2d0c6", accent: "#d3a03a", fixtures: [
     { kind: "counter", x: 0, z: -4 }, ...[-4, 0, 4].map(x => ({ kind: "chair" as const, x, z: 1 })), { kind: "plant", x: -8, z: 4 }, { kind: "plant", x: 8, z: 4 },
   ]},
@@ -162,11 +204,60 @@ function FixtureModel({ fixture }: { fixture: Fixture }) {
     {[-1.2, 1.2].map(side => <mesh key={side} position={[side, 2.2, 0]}><boxGeometry args={[.35, 1.6, 2.5]} /><meshStandardMaterial color="#d6ad50" metalness={.35} /></mesh>)}
   </group>;
 
-  if (kind === "stall" || kind === "display") return <group position={[x, 0, z]}>
-    <mesh position={[0, 1.3, 0]}><boxGeometry args={[3.5, 2.6, 2.5]} /><meshStandardMaterial color={kind === "stall" ? "#9c7851" : color} /></mesh>
-    <mesh position={[0, 2.8, 0]}><boxGeometry args={[3.9, .25, 2.9]} /><meshStandardMaterial color={color} /></mesh>
-    {[-1, 0, 1].map((offset, i) => <mesh key={offset} position={[offset, 2.1, 1.3]}><boxGeometry args={[.5, .7, .3]} /><meshStandardMaterial color={["#d4a13d", "#bf5943", "#488b74"][i]} /></mesh>)}
-  </group>;
+  if (kind === "stall" || kind === "display") {
+    // Split the color to make it striped (e.g. Red and White)
+    const color2 = color === "#bc6345" ? "#f5e6c6" : color === "#28776e" ? "#f5e6c6" : "#d1b272";
+    
+    return <group position={[x, 0, z]}>
+      {/* Wooden Posts */}
+      {[-1.4, 1.4].map(px => [-1.4, 1.4].map(pz => (
+        <mesh key={`${px}-${pz}`} position={[px, 1.5, pz]} castShadow>
+          <boxGeometry args={[0.15, 3, 0.15]} />
+          <meshStandardMaterial color="#4a331f" />
+        </mesh>
+      )))}
+      
+      {/* Counter Table */}
+      <mesh position={[0, 1.2, 0]} castShadow>
+        <boxGeometry args={[3, 0.15, 3]} />
+        <meshStandardMaterial color="#8c684a" />
+      </mesh>
+      
+      {/* Striped Canopy (Angled) */}
+      <group position={[0, 3.2, 0]}>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <mesh key={i} position={[-1.25 + i * 0.5, 0, 0]} rotation={[0, 0, 0.1]} castShadow>
+            <boxGeometry args={[0.5, 0.05, 3.8]} />
+            <meshStandardMaterial color={i % 2 === 0 ? color : color2} />
+          </mesh>
+        ))}
+      </group>
+      
+      {/* Produce/Crates on the counter */}
+      <mesh position={[-0.8, 1.4, 0]} castShadow>
+        <boxGeometry args={[0.8, 0.4, 1.2]} />
+        <meshStandardMaterial color="#a67c52" />
+      </mesh>
+      <mesh position={[0.8, 1.4, 0.2]} castShadow>
+        <boxGeometry args={[1, 0.4, 0.8]} />
+        <meshStandardMaterial color="#a67c52" />
+      </mesh>
+      
+      {/* Small fruits/spheres on the crates */}
+      {[-0.8, -0.6, -1.0].map((fx, i) => (
+        <mesh key={i} position={[fx, 1.65, 0]} castShadow>
+          <sphereGeometry args={[0.12, 8, 8]} />
+          <meshStandardMaterial color={i % 2 === 0 ? "#d83b2d" : "#5e9b46"} />
+        </mesh>
+      ))}
+      {[0.8, 1.0, 0.6].map((fx, i) => (
+        <mesh key={i} position={[fx, 1.65, 0.2]} castShadow>
+          <sphereGeometry args={[0.12, 8, 8]} />
+          <meshStandardMaterial color={i % 2 === 0 ? "#df9f28" : "#d83b2d"} />
+        </mesh>
+      ))}
+    </group>;
+  }
 
   if (kind === "clothing-rack") return <group position={[x, 0, z]}>
     <mesh position={[0, 3, 0]}><boxGeometry args={[4, .18, .18]} /><meshStandardMaterial color="#6b6b67" metalness={.5} /></mesh>
@@ -373,33 +464,357 @@ function PalaceActivity() {
   </>;
 }
 
-function InteriorScene({ config, buildingId }: { config: InteriorConfig; buildingId: string }) {
+/* ───────────── Other players in this building ───────────── */
+
+const PLAYER_HEIGHT = 2.4;
+const MAX_VISIBLE_PLAYERS = 18;
+
+function RemotePlayerFigure({
+  player,
+  position,
+  onChat,
+}: {
+  player: RemotePlayer;
+  position: [number, number, number];
+  onChat: (player: RemotePlayer) => void;
+}) {
+  const group = useRef<THREE.Group>(null);
+
+  // A gentle idle sway so they look alive
+  useFrame(({ clock }) => {
+    if (!group.current) return;
+    group.current.rotation.y = Math.sin(clock.elapsedTime * 0.6 + position[0]) * 0.12;
+  });
+
+  return (
+    <group position={position}>
+      <group
+        ref={group}
+        onClick={(event) => {
+          event.stopPropagation();
+          onChat(player);
+        }}
+        onPointerOver={() => { document.body.style.cursor = "pointer"; }}
+        onPointerOut={() => { document.body.style.cursor = "auto"; }}
+      >
+        <CharacterModel appearance={player.appearance} targetHeight={PLAYER_HEIGHT} action="idle" />
+        {/* Invisible, easier-to-tap hit area */}
+        <mesh position={[0, PLAYER_HEIGHT / 2, 0]}>
+          <cylinderGeometry args={[0.9, 0.9, PLAYER_HEIGHT, 8]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
+      </group>
+      <Html position={[0, PLAYER_HEIGHT + 0.5, 0]} center zIndexRange={[100, 0]}>
+        <button
+          type="button"
+          onClick={() => onChat(player)}
+          aria-label={`Message ${player.username}`}
+          className="whitespace-nowrap rounded-full border border-white/40 bg-[#101c2b]/85 px-2.5 py-1 text-[10px] font-bold text-white shadow-lg backdrop-blur"
+        >
+          {player.username}
+        </button>
+      </Html>
+    </group>
+  );
+}
+
+function RemotePlayers({
+  players,
+  onChat,
+}: {
+  players: RemotePlayer[];
+  onChat: (player: RemotePlayer) => void;
+}) {
+  const sorted = useMemo(
+    () =>
+      [...players]
+        .sort((a, b) => a.userId.localeCompare(b.userId))
+        .slice(0, MAX_VISIBLE_PLAYERS),
+    [players]
+  );
+
+  return (
+    <Suspense fallback={null}>
+      {sorted.map((player, index) => (
+        <RemotePlayerFigure
+          key={player.userId}
+          player={player}
+          // Front of the room, in rows of nine, clear of the furniture
+          position={[-9.6 + (index % 9) * 2.4, 0, 6.2 + Math.floor(index / 9) * 1.5]}
+          onChat={onChat}
+        />
+      ))}
+    </Suspense>
+  );
+}
+
+function ZeusClubScene({ players, onChat }: { players: RemotePlayer[]; onChat: (player: RemotePlayer) => void }) {
+  // 1. Define the dancing crowd positions
+  const crowd = useMemo(() => [
+    { x: 0, z: 2, color: "#d6a23d", rot: 0 },
+    { x: -2, z: 1, color: "#b84d3d", rot: Math.PI / 4 },
+    { x: 2, z: 1, color: "#3c8273", rot: -Math.PI / 4 },
+    { x: -3, z: 4, color: "#496a9a", rot: Math.PI / 2 },
+    { x: 3, z: 4, color: "#853c6c", rot: -Math.PI / 2 },
+    { x: 0, z: 5, color: "#eee0bd", rot: Math.PI },
+    { x: -5, z: 0, color: "#d6a23d", rot: Math.PI / 3 },
+    { x: 5, z: 0, color: "#b84d3d", rot: -Math.PI / 3 },
+  ], []);
+
   return <>
-    <color attach="background" args={["#c8d7d2"]} />
-    <ambientLight intensity={1.6} />
-    <directionalLight position={[-5, 12, 8]} intensity={2} castShadow />
-    <hemisphereLight args={["#fff1d6", "#75654b", 0.55]} />
-    <mesh position={[0, -.15, 0]} receiveShadow><boxGeometry args={[23, .3, 17]} /><meshStandardMaterial color={config.floor} roughness={.9} /></mesh>
-    <mesh position={[0, 2.4, -8.3]} receiveShadow><boxGeometry args={[23, 5, .35]} /><meshStandardMaterial color={config.wall} roughness={.9} /></mesh>
-    <mesh position={[-11.3, 2.4, 0]} receiveShadow><boxGeometry args={[.35, 5, 17]} /><meshStandardMaterial color={config.wall} roughness={.9} /></mesh>
-    <mesh position={[11.3, 2.4, 0]} receiveShadow><boxGeometry args={[.35, 5, 17]} /><meshStandardMaterial color={config.wall} roughness={.9} /></mesh>
-    <mesh position={[0, 4.85, -8.1]}><boxGeometry args={[22.5, .15, .25]} /><meshStandardMaterial color={config.accent} /></mesh>
-    <mesh position={[0, 1.8, -8.05]}><boxGeometry args={[4, 2.9, .2]} /><meshStandardMaterial color={config.accent} /></mesh>
-    <mesh position={[0, 3.2, -7.9]}><boxGeometry args={[1.1, .15, .1]} /><meshStandardMaterial color="#f4e8ce" /></mesh>
-    {config.fixtures.map((fixture, index) => <FixtureModel key={`${fixture.kind}-${index}`} fixture={fixture} />)}
-    {buildingId === "market" && <MarketActivity />}
-    {buildingId === "palace" && <PalaceActivity />}
+    {/* Dark nightclub background */}
+    <color attach="background" args={["#05050a"]} />
+    
+    {/* ✅ Brighter ambient so characters are visible */}
+    <ambientLight intensity={5} color="#8b9bb4" />
+    
+    {/* Dynamic Neon Lights (Boosted) */}
+    <pointLight position={[0, 5, 2]} intensity={8} color="#8b5cf6" distance={25} decay={1.5} />
+    <pointLight position={[-6, 3, 0]} intensity={6} color="#d6336c" distance={20} decay={1.5} />
+    <pointLight position={[6, 3, 0]} intensity={6} color="#2fc4b2" distance={20} decay={1.5} />
+    
+    {/* A massive spotlight straight down on the dance floor */}
+    <spotLight 
+      position={[0, 12, 2]} 
+      angle={1.2} 
+      penumbra={0.8} 
+      intensity={40} 
+      color="#ffffff" 
+      castShadow 
+      target-position={[0, 0, 2]}
+    />
+
+    {/* Dark Glossy Dance Floor */}
+    <mesh position={[0, -0.15, 2]} receiveShadow>
+      <boxGeometry args={[18, .3, 14]} />
+      <meshStandardMaterial color="#0a0a0f" metalness={0.9} roughness={0.1} />
+    </mesh>
+
+    {/* ✅ Realistic DJ Booth & Screen */}
+    <group position={[0, 0, -6]}>
+      {/* The glowing screen */}
+      <mesh position={[0, 4, -2]}>
+        <boxGeometry args={[10, 6, 0.2]} />
+        <meshStandardMaterial color="#32cd32" emissive="#32cd32" emissiveIntensity={0.8} />
+      </mesh>
+      {/* DJ Table */}
+      <mesh position={[0, 1.5, 0]}>
+        <boxGeometry args={[6, 1.5, 2]} />
+        <meshStandardMaterial color="#111" />
+      </mesh>
+      <mesh position={[0, 2.3, 0]}>
+        <boxGeometry args={[6.2, 0.1, 2.2]} />
+        <meshStandardMaterial color="#ff007f" emissive="#ff007f" emissiveIntensity={2} />
+      </mesh>
+      {/* Speakers */}
+      {[-4, 4].map(x => (
+        <group key={x} position={[x, 2, -1]}>
+          <mesh><boxGeometry args={[1.5, 4, 1.5]} /><meshStandardMaterial color="#1a1a2e" /></mesh>
+          {[-1, 0, 1].map(y => (
+            <mesh key={y} position={[0, y, 0.8]} rotation={[Math.PI / 2, 0, 0]}>
+              {/* ✅ Rotation moved to the <mesh> above */}
+              <cylinderGeometry args={[0.4, 0.4, 0.1, 16]} />
+              <meshStandardMaterial color="#222" emissive="#8b5cf6" emissiveIntensity={1} />
+            </mesh>
+          ))}
+        </group>
+      ))}
+    </group>
+
+    {/* ✅ The Bar */}
+    <group position={[-8, 0, -2]} rotation={[0, Math.PI / 4, 0]}>
+      <mesh position={[0, 1.5, 0]}>
+        <boxGeometry args={[5, 2.5, 1.5]} />
+        <meshStandardMaterial color="#1a1a2e" />
+      </mesh>
+      <mesh position={[0, 2.8, 0]}>
+        <boxGeometry args={[5.2, 0.1, 1.7]} />
+        <meshStandardMaterial color="#ff007f" emissive="#ff007f" emissiveIntensity={3} />
+      </mesh>
+      {/* Back Bar Shelf & Bottles */}
+      <mesh position={[0, 3, -1]}>
+        <boxGeometry args={[5, 4, 0.2]} />
+        <meshStandardMaterial color="#05050a" />
+      </mesh>
+      {Array.from({ length: 8 }).map((_, i) => (
+        <mesh key={i} position={[-2 + i * 0.6, 3.5, -0.8]}>
+          <cylinderGeometry args={[0.08, 0.08, 0.5]} />
+          <meshStandardMaterial color={["#ff007f", "#00f0ff", "#ffd700"][i % 3]} emissive={["#ff007f", "#00f0ff", "#ffd700"][i % 3]} emissiveIntensity={1.5} />
+        </mesh>
+      ))}
+    </group>
+
+    {/* ✅ Red Lounge Sofas */}
+    <group position={[8, 0, 2]} rotation={[0, -Math.PI / 4, 0]}>
+      <mesh position={[0, 0.5, 0]}>
+        <boxGeometry args={[4, 1, 1.5]} />
+        <meshStandardMaterial color="#8b0000" roughness={0.9} />
+      </mesh>
+      <mesh position={[0, 1.5, -0.6]}>
+        <boxGeometry args={[4, 1.5, 0.3]} />
+        <meshStandardMaterial color="#8b0000" roughness={0.9} />
+      </mesh>
+    </group>
+
+    {/* ✅ The Dancing Crowd */}
+    {crowd.map((bot, i) => (
+      <group key={i} position={[bot.x, 0, bot.z]} rotation={[0, bot.rot, 0]}>
+        <CharacterModel 
+          appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: bot.color }} 
+          targetHeight={1.8} 
+          action="dance" // 👈 Triggers the dance animation!
+        />
+      </group>
+    ))}
+
+    {/* Other real players in the club */}
+    <RemotePlayers players={players} onChat={onChat} />
   </>;
 }
 
-export default function BuildingInterior({ buildingId, buildingName, onExit }: {
+function MarketCrowd() {
+  const people = useMemo(() => [
+    // Traders behind the top row of stalls (Standing still)
+    { x: -6, z: -6.5, color: "#d6a23d", isWalking: false, isTrader: true },
+    { x: 0, z: -6.5, color: "#b84d3d", isWalking: false, isTrader: true },
+    { x: 6, z: -6.5, color: "#3c8273", isWalking: false, isTrader: true },
+    
+    // Traders behind the bottom row of stalls (Standing still)
+    { x: -6, z: 6.5, color: "#496a9a", isWalking: false, isTrader: true },
+    { x: 0, z: 6.5, color: "#853c6c", isWalking: false, isTrader: true },
+    { x: 6, z: 6.5, color: "#d6a23d", isWalking: false, isTrader: true },
+
+    // Passersby (Moving in circles around the market)
+    { color: "#b84d3d", isTrader: false, speed: 0.5, radius: 3, offset: 0 },
+    { color: "#3c8273", isTrader: false, speed: 0.4, radius: 4, offset: Math.PI },
+    { color: "#d6a23d", isTrader: false, speed: 0.6, radius: 2.5, offset: Math.PI / 1 },
+    { color: "#496a9a", isTrader: false, speed: 0.45, radius: 5, offset: -Math.PI / 2 },
+  ], []);
+
+  return (
+    <group>
+      {people.map((person, i) => {
+        if (person.isTrader) {
+          // Traders stay in place
+          return (
+            <group key={i} position={[person.x!, 0, person.z!]} rotation={[0, person.z! > 0 ? Math.PI : 0, 0]}>
+              <CharacterModel appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: person.color }} targetHeight={1.8} action="idle" />
+            </group>
+          );
+        } else {
+          // Passersby move
+          return <MovingPasserby key={i} {...person as any} />;
+        }
+      })}
+    </group>
+  );
+}
+
+// ✅ New component that actually moves the character
+function MovingPasserby({ color, speed, radius, offset }: { color: string; speed: number; radius: number; offset: number }) {
+  const groupRef = useRef<THREE.Group>(null);
+
+  useFrame(({ clock }) => {
+    if (!groupRef.current) return;
+    const t = clock.elapsedTime * speed + offset;
+    
+    // Move in a circle
+    const x = Math.cos(t) * radius;
+    const z = Math.sin(t) * radius;
+    groupRef.current.position.set(x, 0, z);
+
+    // Make them face the direction they are walking
+    // The derivative of (cos(t), sin(t)) gives the direction
+    const dx = -Math.sin(t) * radius;
+    const dz = Math.cos(t) * radius;
+    groupRef.current.rotation.y = Math.atan2(dx, dz);
+  });
+
+  return (
+    <group ref={groupRef}>
+      <CharacterModel appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: color }} targetHeight={1.8} action="walk" />
+    </group>
+  );
+}
+
+//Update InteriorScene to use the new Zeus Club Scene
+function InteriorScene({ config, buildingId, players, onChat }: {
+  config: InteriorConfig;
+  buildingId: string;
+  players: RemotePlayer[];
+  onChat: (player: RemotePlayer) => void;
+}) {
+  const isClub = buildingId === "zeus-club";
+  const isMarket = buildingId === "market";
+
+  return <>
+    <color attach="background" args={[isClub ? "#05050a" : isMarket ? "#87CEEB" : "#c8d7d2"]} />
+    
+    {/* ✅ Lighting Logic */}
+    {isClub ? (
+      // Dark Club Lighting
+      <>
+        <ambientLight intensity={0.6} color="#8b9bb4" />
+        <pointLight position={[0, 5, 2]} intensity={8} color="#8b5cf6" distance={25} decay={1.5} />
+        <pointLight position={[-6, 3, 0]} intensity={6} color="#d6336c" distance={20} decay={1.5} />
+        <pointLight position={[6, 3, 0]} intensity={6} color="#2fc4b2" distance={20} decay={1.5} />
+        <spotLight position={[0, 12, 2]} angle={1.2} penumbra={0.8} intensity={15} color="#ffffff" castShadow target-position={[0, 0, 2]} />
+      </>
+    ) : (
+      // Bright Sunlight for Market and other buildings
+      <>
+        <ambientLight intensity={1.2} color="#ffffff" />
+        <directionalLight position={[10, 15, 5]} intensity={2.5} color="#fff4d4" castShadow />
+        <hemisphereLight args={["#87CEEB", "#6b4c3a", 0.8]} />
+      </>
+    )}
+
+    <mesh position={[0, -.15, 0]} receiveShadow>
+      <boxGeometry args={[23, .3, 17]} />
+      <meshStandardMaterial color={config.floor} roughness={isMarket ? 1 : 0.9} metalness={isClub ? 0.6 : 0} />
+    </mesh>
+    
+    {/* Walls (Hidden for the open-air market) */}
+    {!isMarket && (
+      <>
+        <mesh position={[0, 2.4, -8.3]} receiveShadow><boxGeometry args={[23, 5, .35]} /><meshStandardMaterial color={config.wall} roughness={.9} /></mesh>
+        <mesh position={[-11.3, 2.4, 0]} receiveShadow><boxGeometry args={[.35, 5, 17]} /><meshStandardMaterial color={config.wall} roughness={.9} /></mesh>
+        <mesh position={[11.3, 2.4, 0]} receiveShadow><boxGeometry args={[.35, 5, 17]} /><meshStandardMaterial color={config.wall} roughness={.9} /></mesh>
+        <mesh position={[0, 4.85, -8.1]}><boxGeometry args={[22.5, .15, .25]} /><meshStandardMaterial color={config.accent} /></mesh>
+      </>
+    )}
+
+    {config.fixtures.map((fixture, index) => <FixtureModel key={`${fixture.kind}-${index}`} fixture={fixture} />)}
+    {buildingId === "market" && <MarketCrowd />}
+    {buildingId === "palace" && <PalaceActivity />}
+    <RemotePlayers players={players} onChat={onChat} />
+  </>;
+}
+
+export default function BuildingInterior({ buildingId, buildingName, onExit, onOpenPhone }: {
   buildingId: string; buildingName: string; onExit: () => void;
+  /** Called after a player is tapped so the phone opens on their chat */
+  onOpenPhone?: () => void;
 }) {
   const config = INTERIORS[buildingId] ?? DEFAULT_INTERIOR;
+  const { players, openThread } = useMultiplayer();
+  const here = useMemo(
+    () => players.filter((player) => player.place === buildingId),
+    [players, buildingId]
+  );
+
+  const [, forceNoop] = useState(0);
+  void forceNoop;
+
+  function chatWith(player: RemotePlayer) {
+    openThread({ userId: player.userId, username: player.username });
+    onOpenPhone?.();
+  }
+
   return <div className="absolute inset-0 z-20 overflow-hidden bg-[#c8d7d2]">
     <Canvas shadows dpr={[1, 1.5]} camera={{ position: [0, 10, 19], fov: 48, near: .1, far: 100 }} gl={{ antialias: true }}>
       <OrbitControls makeDefault enablePan={false} enableRotate enableZoom minDistance={12} maxDistance={27} maxPolarAngle={Math.PI / 2.05} target={[0, 1.5, 0]} />
-      <InteriorScene config={config} buildingId={buildingId} />
+      <InteriorScene config={config} buildingId={buildingId} players={here} onChat={chatWith} />
     </Canvas>
     <div className="pointer-events-none absolute inset-0">
       <div className="pointer-events-auto absolute left-3 top-[calc(env(safe-area-inset-top)+7rem)] flex max-w-[calc(100%-1.5rem)] items-center gap-2 sm:left-4">
@@ -407,7 +822,9 @@ export default function BuildingInterior({ buildingId, buildingName, onExit }: {
           <ArrowLeft size={18} />
         </button>
         <div className="min-w-0 max-w-[calc(100vw-5rem)] rounded-md border border-white/50 bg-white/80 px-3 py-2 shadow-lg backdrop-blur">
-          <p className="truncate text-[9px] font-bold uppercase tracking-[0.12em] text-[#728274]">{config.subtitle}</p>
+          <p className="truncate text-[9px] font-bold uppercase tracking-[0.12em] text-[#728274]">
+            {config.subtitle}{here.length > 0 ? ` · ${here.length} here` : ""}
+          </p>
           <h1 className="truncate text-sm font-extrabold text-[#263d31]">{buildingName}</h1>
         </div>
       </div>

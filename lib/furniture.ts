@@ -59,7 +59,7 @@ export const FURNITURE_CATALOG: FurnitureItem[] = [
   // ── LIVING ──
   { id: "sofa", name: "3-seater sofa", emoji: "🛋️", category: "Living", price: 150000, w: 1, d: 2, model: "sofa", kinds: ["living", "studio"] },
   { id: "centre-table", name: "Centre table", emoji: "🪵", category: "Living", price: 30000, w: 2, d: 1, model: "table", kinds: ["living", "studio"] },
-  { id: "tv-stand", name: "TV and stand", emoji: "📺", category: "Living", price: 180000, w: 1, d: 1, model: "tv", kinds: ["living", "studio", "bedroom"] },
+  { id: "tv-stand", name: "TV and stand", emoji: "📺", category: "Living", price: 180000, w: 2, d: 1, model: "tv", kinds: ["living", "studio", "bedroom"] },
   
 
   // ── KITCHEN ──
@@ -135,17 +135,17 @@ export function validateFurniturePlacement(
   const room = layout.rooms.find((entry) => entry.id === position.roomId);
   if (!room) return { ok: false, reason: "That room does not exist." };
   if (!item.kinds.includes(room.kind)) return { ok: false, reason: `${item.name} cannot be placed in this room.` };
+  
   if (!Number.isInteger(position.col) || !Number.isInteger(position.row) || position.col < 0 || position.row < 0) {
     return { ok: false, reason: "Furniture must be placed on the tile grid." };
   }
 
-  const { cols, rows } = roomTiles(room);
   const size = furnitureGridFootprint(room, item, position.rotation);
-  if (position.col + size.w > cols || position.row + size.d > rows) {
-    return { ok: false, reason: "Furniture must remain inside the room." };
-  }
+  
+  // ✅ REMOVED: The `position.col + size.w > cols` check.
+  // This allows the furniture to cross room boundaries (into the kitchen).
 
-  // ✅ Only furniture overlap check — no wall checks at all.
+  // ✅ Only check furniture overlap (no wall checks)
   const candidate = { col: position.col, row: position.row, ...size };
   for (const existing of placed) {
     if (existing.uid === ignoreUid || existing.roomId !== position.roomId) continue;

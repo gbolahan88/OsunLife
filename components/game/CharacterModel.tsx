@@ -14,7 +14,7 @@ const MALE_MODEL_URL = "/models/character_male.glb";
 useGLTF.preload(FEMALE_MODEL_URL);
 useGLTF.preload(MALE_MODEL_URL);
 
-export type CharacterAction = "idle" | "walk" | "sit" | "lay" | "work" | "shower";
+export type CharacterAction = "idle" | "walk" | "sit" | "lay" | "work" | "shower" | "dance";
 
 type CharacterModelProps = {
   appearance: CharacterAppearance;
@@ -231,6 +231,19 @@ export default function CharacterModel({
       a.thighL = a.thighR = 1.5 * SIGN.thigh;
       a.calfL = a.calfR = 1.5 * SIGN.calf;
       armAngleL = armAngleR = ARM_FORWARD * REACH.sit; // hands resting toward the lap
+    } else if (currentAction === "dance") {
+      // ✅ BOT DANCE LOGIC: Bobbing and arm swinging
+      const beat = Math.sin(t * 8); // Fast 8Hz beat
+      const sway = Math.cos(t * 4);
+      
+      a.thighL = beat * 0.2;
+      a.thighR = -beat * 0.2;
+      
+      armAngleL = ARM_FORWARD * 1.8 + beat * 0.5; // Arms up
+      armAngleR = ARM_FORWARD * 1.8 - beat * 0.5;
+      
+      targetY = Math.abs(beat) * targetHeight * 0.05; // Bob up and down
+      g.rotation.z = sway * 0.05; // Slight body sway
     } else if (currentAction === "walk") {
       const swing = Math.sin(t * 8);
       a.thighL = swing * 0.6 * SIGN.thigh;

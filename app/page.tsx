@@ -18,8 +18,6 @@ export default function Page() {
 }
 
 async function AuthenticatedGame() {
-  // Tells Next.js this component MUST run at request time (no prerender).
-  // This is the fix for "unstable value Date.now() while prerendering".
   await connection();
 
   const supabase = await createClient();
@@ -36,5 +34,25 @@ async function AuthenticatedGame() {
     .maybeSingle();
   const username = profile?.username ?? "Player";
 
-  return <GameApp username={username} />;
+  // ── Read the public Supabase env vars (must be NEXT_PUBLIC_*) ──
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error(
+      "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY " +
+        "in .env.local. Restart the dev server after adding them.",
+    );
+  }
+
+  return (
+    <GameApp
+      username={username}
+      userId={claims.sub}
+      supabaseUrl={supabaseUrl}
+      supabaseKey={supabaseKey}
+    />
+  );
 }
