@@ -2,7 +2,7 @@
 
 import { ArrowLeft } from "lucide-react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { Html, OrbitControls } from "@react-three/drei";
+import { Html, OrbitControls, useGLTF } from "@react-three/drei";
 import {
   Suspense,
   useCallback,
@@ -46,6 +46,7 @@ import {
   type VenueAction,
   type VenueSpot,
 } from "@/lib/venue";
+import { MAP_TASKS } from "@/lib/mapTasks";
 
 type FixtureKind =
   | "desk" | "chair" | "bed" | "medical-bed" | "shelf" | "counter"
@@ -142,14 +143,8 @@ const INTERIORS: Record<string, InteriorConfig> = {
     { kind: "car-lift", x: -5, z: -2, color: "#d3a03a" }, { kind: "car-lift", x: 5, z: -2, color: "#d3a03a" },
     { kind: "shelf", x: -8, z: 3, color: "#66594a" }, { kind: "shelf", x: 8, z: 3, color: "#66594a" }, { kind: "counter", x: 0, z: 4, color: "#66594a" },
   ]},
-  berrymist: { subtitle: "BerryMist Lounge", floor: "#352a3d", wall: "#44374c", accent: "#d6336c", fixtures: [
-    { kind: "bar", x: 0, z: -5, color: "#d6336c" }, { kind: "table", x: -5, z: 0, color: "#6d526f" }, { kind: "table", x: 5, z: 0, color: "#6d526f" },
-    { kind: "sofa", x: -5, z: 4, color: "#6d526f" }, { kind: "sofa", x: 5, z: 4, color: "#6d526f" },
-  ]},
-  "circle-lounge": { subtitle: "Circle Lounge", floor: "#253d40", wall: "#344d50", accent: "#2fc4b2", fixtures: [
-    { kind: "bar", x: 0, z: -5, color: "#2fc4b2" }, ...[-6, 0, 6].map(x => ({ kind: "table" as const, x, z: 0, color: "#477c77" })),
-    { kind: "sofa", x: -5, z: 4, color: "#477c77" }, { kind: "sofa", x: 5, z: 4, color: "#477c77" },
-  ]},
+  berrymist: { subtitle: "BerryMist Lounge", floor: "#352a3d", wall: "#44374c", accent: "#d6336c", fixtures: [] },
+  "circle-lounge": { subtitle: "Circle Lounge", floor: "#253d40", wall: "#344d50", accent: "#2fc4b2", fixtures: [] },
   // The DJ booth, bar, VIP sofa, staff and dancing crowd are drawn by ZeusClubProps (ZeusClub.tsx)
   "zeus-club": {
     subtitle: "Zeus Club dance floor",
@@ -327,6 +322,105 @@ function FixtureModel({ fixture }: { fixture: Fixture }) {
   return null;
 }
 
+function LoungeModel({
+  url,
+  position,
+  rotation = 0,
+  maxSize,
+}: {
+  url: string;
+  position: [number, number, number];
+  rotation?: number;
+  maxSize: [number, number, number];
+}) {
+  const { scene } = useGLTF(url);
+  const { model, scale, offset } = useMemo(() => {
+    const model = scene.clone(true);
+    model.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+        // Force opaque to fix the ghosting
+        if (child.material) {
+          const mats = Array.isArray(child.material) ? child.material : [child.material];
+          mats.forEach((m) => {
+            m.transparent = false;
+            m.opacity = 1;
+            m.depthWrite = true;
+          });
+        }
+      }
+    });
+
+    const bounds = new THREE.Box3().setFromObject(model);
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    bounds.getSize(size);
+    bounds.getCenter(center);
+    
+    // Scale to fit maxSize
+    const scale = Math.min(
+      maxSize[0] / size.x,
+      maxSize[1] / size.y,
+      maxSize[2] / size.z,
+    );
+
+    return {
+      model,
+      scale,
+      // Center X/Z, place bottom on the floor (Y = 0)
+      offset: [-center.x * scale, -bounds.min.y * scale, -center.z * scale] as [number, number, number],
+    };
+  }, [scene, maxSize]);
+
+  return (
+    <group position={position} rotation={[0, rotation, 0]}>
+      <group position={offset} scale={scale}>
+        <primitive object={model} />
+      </group>
+    </group>
+  );
+}
+
+function LoungeGuests({
+  buildingId,
+  position,
+  rotation,
+  index,
+}: {
+  buildingId: string;
+  position: [number, number, number];
+  rotation: number;
+  index: number;
+}) {
+  const colors = buildingId === "berrymist"
+    ? ["#d6336c", "#e5b95b", "#a64b70"]
+    : ["#2fc4b2", "#d6a23d", "#347b6b"];
+
+  // ✅ Lounge 0: 2 guests, Lounge 1: 1 guest, Lounge 2 & 3: 0 guests
+  const guestCount = index === 0 ? 2 : index === 1 ? 1 : 0;
+  if (guestCount === 0) return null;
+
+  const guests = [
+    { x: 0, z: 0.7, rot: 0 },      // Front sofa
+    { x: -1.15, z: 0, rot: 0.6 },  // Left chair
+  ];
+
+  return (
+    <group position={position} rotation={[0, rotation, 0]}>
+      {guests.slice(0, guestCount).map((g, i) => (
+        <group key={i} position={[g.x, 0.45, g.z]} rotation={[0, g.rot, 0]}>
+          <CharacterModel
+            appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: colors[i] }}
+            targetHeight={PERSON_HEIGHT}
+            action="sit"
+          />
+        </group>
+      ))}
+    </group>
+  );
+}
+
 /* ───────────── Palace people (simple figures) ───────────── */
 
 type PersonRole = "customer" | "seller" | "food-seller" | "herbalist" | "king" | "chief" | "guard";
@@ -445,6 +539,9 @@ const SPAWN_X = 0;
 const SPAWN_Z = 6.2;
 const MAX_VISIBLE_PLAYERS = 18;
 const ROOM = { minX: -10.4, maxX: 10.4, minZ: -7.4, maxZ: 7.4 };
+const LOUNGE_BUILDINGS = new Set(["berrymist", "circle-lounge"]);
+const LOUNGE_BAR_MAX_SIZE: [number, number, number] = [4.8, 2.8, 2.8];
+const LOUNGE_SET_MAX_SIZE: [number, number, number] = [7.2, 2.4, 3.6];
 
 type Box = ObstacleBox;
 
@@ -475,6 +572,12 @@ function buildObstacles(buildingId: string, fixtures: Fixture[]): Box[] {
     });
   }
   if (buildingId === "zeus-club") boxes.push(...CLUB_BOXES);
+  if (LOUNGE_BUILDINGS.has(buildingId)) {
+    boxes.push(
+      { x: 0, z: -5, hw: 2.4, hd: 1.4 },
+      { x: 0, z: -0.65, hw: 3.2, hd: 1.05 },
+    );
+  }
   return boxes;
 }
 
@@ -556,6 +659,7 @@ function LocalPlayer({
   bubble,
   boxes,
   dancing,
+  sitting,
   localRef,
   targetRef,
 }: {
@@ -564,6 +668,7 @@ function LocalPlayer({
   bubble?: string;
   boxes: Box[];
   dancing: boolean;
+  sitting: boolean;
   localRef: MutableRefObject<RoomPose>;
   targetRef: MutableRefObject<{ x: number; z: number } | null>;
 }) {
@@ -622,11 +727,16 @@ function LocalPlayer({
 
     r.rotation.y = lerpAngle(r.rotation.y, facing.current, Math.min(1, delta * 12));
 
-    const next: RoomAction = moving ? "walk" : dancing ? "dance" : "idle";
+    const next: RoomAction = moving ? "walk" : sitting ? "sit" : dancing ? "dance" : "idle";
     if (next !== actionRef.current) {
       actionRef.current = next;
       setAction(next);
     }
+    g.position.y = THREE.MathUtils.lerp(
+      g.position.y,
+      next === "sit" ? 0.45 : 0,
+      Math.min(1, delta * 8),
+    );
     localRef.current = { x: g.position.x, z: g.position.z, ry: r.rotation.y, action: next };
   });
 
@@ -675,6 +785,7 @@ function RemotePlayerFigure({
       r.rotation.y = lerpAngle(r.rotation.y, pose.ry, k);
       next = pose.action;
     }
+    g.position.y += ((next === "sit" ? 0.45 : 0) - g.position.y) * k;
 
     if (next !== actionRef.current) {
       actionRef.current = next;
@@ -806,6 +917,7 @@ function InteriorScene({
   localId,
   remote,
   onChat,
+  sitting,
   appearance,
   username,
   boxes,
@@ -813,6 +925,7 @@ function InteriorScene({
   localRef,
   targetRef,
   onFloorTap,
+  onSeatAt,
 }: {
   config: InteriorConfig;
   buildingId: string;
@@ -821,6 +934,7 @@ function InteriorScene({
   localId: string;
   remote: MutableRefObject<Map<string, RemotePose>>;
   onChat: (player: RemotePlayer) => void;
+  sitting: boolean;
   appearance: CharacterAppearance;
   username: string;
   boxes: Box[];
@@ -828,6 +942,7 @@ function InteriorScene({
   localRef: MutableRefObject<RoomPose>;
   targetRef: MutableRefObject<{ x: number; z: number } | null>;
   onFloorTap: (x: number, z: number) => void;
+  onSeatAt: (pos: [number, number], action: "sit" | "idle") => void;
 }) {
   const isClub = buildingId === "zeus-club";
   const isMarket = buildingId === "market";
@@ -872,6 +987,61 @@ function InteriorScene({
     )}
 
     {config.fixtures.map((fixture, index) => <FixtureModel key={`${fixture.kind}-${index}`} fixture={fixture} />)}
+    {LOUNGE_BUILDINGS.has(buildingId) && (
+      <Suspense fallback={null}>
+        {/* Bar at the back */}
+        <LoungeModel url="/models/bar.glb" position={[0, 0, -6.3]} maxSize={[6, 4, 4]} />
+
+        {/* 4 duplicated lounge sets */}
+        {[
+          { pos: [-5.8, 0, 4] as [number, number, number], rot: 1.5 },
+          { pos: [6, 0, 4] as [number, number, number], rot: -1.5 },
+          { pos: [-5.8, 0, -3] as [number, number, number], rot: 0.9 },
+          { pos: [6, 0, -3] as [number, number, number], rot: -0.9 },
+        ].map((set, i) => (
+          <group key={i}>
+            {/* ✅ Increased maxSize from 3.2x1.4x1.8 to 6x3x4 so it's double the size */}
+            <LoungeModel
+              url="/models/lounge.glb"
+              position={set.pos}
+              rotation={set.rot}
+              maxSize={[7, 3, 4]}
+            />
+            <LoungeGuests
+              buildingId={buildingId}
+              position={set.pos}
+              rotation={set.rot}
+              index={i}
+            />
+
+            {/* Click zones */}
+            <group position={set.pos} rotation={[0, set.rot, 0]}>
+              <mesh
+                position={[0, 0.5, 0.7]}
+                onClick={(e) => { e.stopPropagation(); onSeatAt([set.pos[0], set.pos[2] + 0.7], "sit"); }}
+              >
+                <boxGeometry args={[2.4, 1, 1.6]} />
+                <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+              </mesh>
+              <mesh
+                position={[-1.15, 0.5, 0]}
+                onClick={(e) => { e.stopPropagation(); onSeatAt([set.pos[0] - 1.15, set.pos[2]], "sit"); }}
+              >
+                <boxGeometry args={[1.2, 1, 1.2]} />
+                <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+              </mesh>
+              <mesh
+                position={[1.15, 0.5, 0]}
+                onClick={(e) => { e.stopPropagation(); onSeatAt([set.pos[0] + 1.15, set.pos[2]], "sit"); }}
+              >
+                <boxGeometry args={[1.2, 1, 1.2]} />
+                <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+              </mesh>
+            </group>
+          </group>
+        ))}
+      </Suspense>
+    )}
     {isClub && <ZeusClubProps />}
     {isMarket && <MarketCrowd />}
     {buildingId === "palace" && <PalaceActivity />}
@@ -883,6 +1053,7 @@ function InteriorScene({
         bubble={bubbles[localId]}
         boxes={boxes}
         dancing={dancing}
+        sitting={sitting}
         localRef={localRef}
         targetRef={targetRef}
       />
@@ -907,6 +1078,7 @@ export default function BuildingInterior({
 }) {
   const config = INTERIORS[buildingId] ?? DEFAULT_INTERIOR;
   const venue = isVenue(buildingId);
+  const hasMapTask = MAP_TASKS.some((task) => task.targetBuildingId === buildingId);
   const { userId, username, players, openThread } = useMultiplayer();
   const here = useMemo(
     () => players.filter((player) => player.place === buildingId),
@@ -921,6 +1093,7 @@ export default function BuildingInterior({
   const spendCash = useGameStore((state) => state.spendCash);
 
   const [dancing, setDancing] = useState(false);
+  const [sitting, setSitting] = useState(false);
   const [bubbles, setBubbles] = useState<Record<string, string>>({});
   const bubbleTimers = useRef(new Map<string, number>());
   const localRef = useRef<RoomPose>({ x: SPAWN_X, z: SPAWN_Z, ry: 0, action: "idle" });
@@ -977,6 +1150,7 @@ export default function BuildingInterior({
   const handleFloorTap = useCallback((x: number, z: number) => {
     targetRef.current = { x, z };
     setDancing(false);
+    setSitting(false);
   }, []);
 
   const handleBuy = useCallback(
@@ -1002,6 +1176,13 @@ export default function BuildingInterior({
   const handleSpot = useCallback((spot: VenueSpot) => {
     targetRef.current = { x: spot.x, z: spot.z };
     setDancing(false);
+    setSitting(spot.id === "lounge");
+  }, []);
+
+    const handleSeatAt = useCallback((pos: [number, number], action: "sit" | "idle") => {
+    targetRef.current = { x: pos[0], z: pos[1] };
+    setSitting(action === "sit");
+    setDancing(false);
   }, []);
 
   function chatWith(player: RemotePlayer) {
@@ -1020,6 +1201,7 @@ export default function BuildingInterior({
         localId={userId}
         remote={remote}
         onChat={chatWith}
+        sitting={sitting}
         appearance={appearance}
         username={username || "You"}
         boxes={boxes}
@@ -1027,6 +1209,7 @@ export default function BuildingInterior({
         localRef={localRef}
         targetRef={targetRef}
         onFloorTap={handleFloorTap}
+        onSeatAt={handleSeatAt}
       />
     </Canvas>
 
@@ -1052,32 +1235,22 @@ export default function BuildingInterior({
           cash={cash}
           here={here}
           dancing={dancing}
-          onToggleDance={() => setDancing((current) => !current)}
+          onToggleDance={() => {
+            setSitting(false);
+            setDancing((current) => !current);
+          }}
           onReact={handleReact}
           onBuy={handleBuy}
           onWalkToSpot={handleSpot}
           onChat={chatWith}
         />
-      ) : (
-        <div className="pointer-events-none absolute inset-x-0 bottom-44 flex flex-col items-center gap-2 px-3">
+      ) : !hasMapTask ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6.5rem)] flex flex-col items-center gap-2 px-3">
           <p className="rounded-full bg-black/45 px-3 py-1 text-[10px] font-semibold text-white backdrop-blur">
             Tap the floor to walk
           </p>
-          <button
-            type="button"
-            onClick={() => setDancing((current) => !current)}
-            aria-pressed={dancing}
-            className={`pointer-events-auto flex h-11 items-center gap-2 rounded-full border px-5 text-[13px] font-extrabold shadow-lg backdrop-blur transition-colors ${
-              dancing
-                ? "border-[#f04f9b] bg-[#f04f9b] text-white"
-                : "border-white/80 bg-white/95 text-[#263d31]"
-            }`}
-          >
-            <span aria-hidden>💃</span>
-            {dancing ? "Stop dancing" : "Dance"}
-          </button>
         </div>
-      )}
+      ) : null}
     </div>
   </div>;
 }

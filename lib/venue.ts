@@ -82,11 +82,11 @@ export const VENUE_SPOTS: Record<string, VenueSpot[]> = {
   ],
   berrymist: [
     { id: "bar", emoji: "🍸", label: "Bar", x: 0, z: -3.4 },
-    { id: "lounge", emoji: "🛋️", label: "Lounge", x: -5, z: 2.3 },
+    { id: "lounge", emoji: "🪑", label: "Lounge seat", x: 0, z: 0.9 },
   ],
   "circle-lounge": [
     { id: "bar", emoji: "🍸", label: "Bar", x: 0, z: -3.4 },
-    { id: "lounge", emoji: "🛋️", label: "Lounge", x: -5, z: 2.3 },
+    { id: "lounge", emoji: "🪑", label: "Lounge seat", x: 0, z: 0.9 },
   ],
 };
 

@@ -53,11 +53,20 @@ type TrafficVehicleProps = {
 
 const WORLD_WIDTH = 2400;
 const WORLD_HEIGHT = 1600;
+const MAP_FIT_HALF_WIDTH = (WORLD_WIDTH / 2 + 170) * 1.13;
+const MAP_FIT_HALF_DEPTH = (WORLD_HEIGHT / 2 + 130) * 1.13;
 const GROVE_CENTER = { x: 672, y: 1040 };
 const MIN_BUILDING_GAP = 90;
 const LABEL_FLIP_X = WORLD_WIDTH * 0.7;
 const PEDESTRIAN_SCALE = 0.45;
 const PLAYER_SCALE = 0.5;
+const MAP_CAMERA_POLAR_ANGLE = Math.PI / 3.5;
+const MAP_CAMERA_DIRECTION = new THREE.Vector3(
+  0,
+  Math.cos(MAP_CAMERA_POLAR_ANGLE),
+  Math.sin(MAP_CAMERA_POLAR_ANGLE),
+);
+const MAP_CAMERA_MAX_DISTANCE = 12000;
 
 const UPPER_ROAD_TILT = -0.035;
 const LOWER_ROAD_TILT = 0.04;
@@ -2213,76 +2222,30 @@ function StreetLamps() {
   );
 }
 
-const CAMERA_DIRECTION = new THREE.Vector3(0, 2450, 2350).normalize();
-const FOCUS_DISTANCE = 950;
-const FOCUS_START_DISTANCE = 2400;
-const FOCUS_DURATION = 1.6;
-
-type OrbitLike = {
+type MapControlsLike = {
   target: THREE.Vector3;
   update: () => void;
-  addEventListener: (type: string, listener: () => void) => void;
-  removeEventListener: (type: string, listener: () => void) => void;
 };
 
-function FocusOnPlayer({ active, focus }: { active: boolean; focus: THREE.Vector3 }) {
+function FitMapCamera({ active }: { active: boolean }) {
   const camera = useThree((state) => state.camera);
-  const controls = useThree((state) => state.controls) as unknown as OrbitLike | null;
-  const focusRef = useRef(focus);
-  const armed = useRef(true);
-  const animation = useRef<{
-    elapsed: number;
-    start: THREE.Vector3;
-    end: THREE.Vector3;
-    target: THREE.Vector3;
-  } | null>(null);
-
-  // Keep the focus ref fresh WITHOUT touching it during render
+  const controls = useThree((state) => state.controls) as MapControlsLike | null;
+  const { width, height } = useThree((state) => state.size);
   useEffect(() => {
-    focusRef.current = focus;
-  }, [focus]);
+    if (!active || !controls || !width || !height || !(camera instanceof THREE.PerspectiveCamera)) return;
 
-  useEffect(() => {
-    if (!active) armed.current = true;
-  }, [active]);
+    const aspect = width / height;
+    const halfFovTangent = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    const verticalHalfExtent = MAP_FIT_HALF_DEPTH * Math.cos(MAP_CAMERA_POLAR_ANGLE);
+    const fitDistance = Math.max(
+      MAP_FIT_HALF_WIDTH / (halfFovTangent * aspect),
+      verticalHalfExtent / halfFovTangent,
+    ) * 1.15;
 
-  useEffect(() => {
-    if (!active || !controls || !armed.current) return;
-    armed.current = false;
-
-    const target = focusRef.current.clone();
-    const start = target
-      .clone()
-      .add(CAMERA_DIRECTION.clone().multiplyScalar(FOCUS_START_DISTANCE));
-    const end = target
-      .clone()
-      .add(CAMERA_DIRECTION.clone().multiplyScalar(FOCUS_DISTANCE));
-
-    camera.position.copy(start);
-    controls.target.copy(target);
+    camera.position.copy(MAP_CAMERA_DIRECTION).multiplyScalar(fitDistance);
+    controls.target.set(0, 0, 0);
     controls.update();
-    animation.current = { elapsed: 0, start, end, target };
-
-    const cancel = () => {
-      animation.current = null;
-    };
-    controls.addEventListener("start", cancel);
-    return () => controls.removeEventListener("start", cancel);
-  }, [active, camera, controls]);
-
-  useFrame((_, delta) => {
-    const current = animation.current;
-    if (!current || !controls) return;
-
-    current.elapsed += delta;
-    const t = Math.min(current.elapsed / FOCUS_DURATION, 1);
-    const eased = 1 - Math.pow(1 - t, 3);
-
-    camera.position.lerpVectors(current.start, current.end, eased);
-    controls.target.copy(current.target);
-    controls.update();
-    if (t >= 1) animation.current = null;
-  });
+  }, [active, camera, controls, width, height]);
 
   return null;
 }
@@ -2301,7 +2264,6 @@ function Scene({ active, interactive, hour, appearance, selectedId, travel, onSe
     const building = travel ? PLACED_BUILDINGS.find((entry) => entry.id === travel.buildingId) : undefined;
     return building ? buildingPoint(building) : HOME_POINT;
   }, [travel]);
-  const playerFocus = useMemo(() => new THREE.Vector3(...worldPosition(destination.x, destination.y, 0)), [destination]);
   const riverGeometry = useMemo(() => createRiverGeometry(), []);
   const grassTexture = useMemo(() => createGrassTexture(), []);
   const asphaltTexture = useMemo(() => createRoadTexture(), []);
@@ -2331,16 +2293,16 @@ function Scene({ active, interactive, hour, appearance, selectedId, travel, onSe
         enableZoom={true}          // Allows zooming in/out
         screenSpacePanning={true}  // Makes the drag follow your mouse perfectly
         minDistance={400}
-        maxDistance={3500}
-        minPolarAngle={Math.PI / 3.5}
-        maxPolarAngle={Math.PI / 3.5}
+        maxDistance={MAP_CAMERA_MAX_DISTANCE}
+        minPolarAngle={MAP_CAMERA_POLAR_ANGLE}
+        maxPolarAngle={MAP_CAMERA_POLAR_ANGLE}
         target={[0, 0, 0]}
         touches={{
           ONE: THREE.TOUCH.PAN,      // One finger drags the map
           TWO: THREE.TOUCH.DOLLY_PAN // Two fingers zoom
         }}
       />
-      <FocusOnPlayer active={active && interactive} focus={playerFocus} />
+      <FitMapCamera active={active && interactive} />
 
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -48, 0]}>
         <planeGeometry args={[10000, 10000]} /><meshStandardMaterial map={oceanTexture} color="#d2e3e3" roughness={0.42} metalness={0.12} />

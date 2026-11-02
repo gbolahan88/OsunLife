@@ -1,4 +1,4 @@
-// components/multiplayer/MultiplayerProvider.tsx
+
 "use client";
 
 import {
@@ -84,7 +84,7 @@ type MultiplayerValue = {
   openThread: (target: ThreadTarget | null) => void;
   sendMessage: (to: ThreadTarget, body: string) => Promise<SendResult>;
   markRead: (otherUserId: string) => Promise<void>;
-  /** ✅ The live Supabase channel for broadcasting club events */
+  /** The live Supabase channel for broadcasting club events */
   channel: RealtimeChannel | null;
 };
 
@@ -94,21 +94,25 @@ const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 const USERNAME_PATTERN = /^[a-z0-9_]{3,20}$/;
 
 function cleanUsername(value: unknown): string {
-  return typeof value === "string" && USERNAME_PATTERN.test(value) ? value : "Player";
+  return typeof value === "string" && USERNAME_PATTERN.test(value)
+    ? value
+    : "Player";
 }
 
 /** Other players send their look over the network, so never trust it. */
 function sanitizeAppearance(raw: unknown): CharacterAppearance {
   const a = (raw ?? {}) as Record<string, unknown>;
   const fallback = DEFAULT_CHARACTER_APPEARANCE;
+
   const color = (value: unknown, def: string) =>
     typeof value === "string" && COLOR_PATTERN.test(value) ? value : def;
 
   return {
     ...fallback,
-    gender: (a.gender === "Man" || a.gender === "Woman"
-      ? a.gender
-      : fallback.gender) as CharacterAppearance["gender"],
+    gender:
+      a.gender === "Man" || a.gender === "Woman"
+        ? a.gender
+        : fallback.gender,
     skin: color(a.skin, fallback.skin),
     hair: color(a.hair, fallback.hair),
     shirt: color(a.shirt, fallback.shirt),
@@ -129,12 +133,24 @@ function toMessage(row: MessageRow): ChatMessage {
   };
 }
 
-function mergeMessages(current: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+function mergeMessages(
+  current: ChatMessage[],
+  incoming: ChatMessage[],
+): ChatMessage[] {
   const byId = new Map<string, ChatMessage>();
+
   for (const message of current) byId.set(message.id, message);
-  for (const message of incoming)
-    byId.set(message.id, { ...byId.get(message.id), ...message });
-  return [...byId.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+  for (const message of incoming) {
+    byId.set(message.id, {
+      ...byId.get(message.id),
+      ...message,
+    });
+  }
+
+  return [...byId.values()].sort((a, b) =>
+    a.createdAt.localeCompare(b.createdAt),
+  );
 }
 
 /* ───────────────────────────── context ───────────────────────────── */
@@ -156,7 +172,7 @@ const defaultValue: MultiplayerValue = {
   openThread: () => {},
   sendMessage: noopSend,
   markRead: async () => {},
-  channel: null, // ✅ Added default
+  channel: null,
 };
 
 const MultiplayerContext = createContext<MultiplayerValue>(defaultValue);
@@ -195,14 +211,15 @@ export function MultiplayerProvider({
   const [onlineCount, setOnlineCount] = useState(1);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeThread, setActiveThread] = useState<ThreadTarget | null>(null);
-  
-  // ✅ Store channel in state so we can pass it via context safely
+
+  // Store channel in state so we can pass it via context safely.
   const [channel, setChannel] = useState<RealtimeChannel | null>(null);
 
   const payload = useMemo<PresencePayload>(
     () => ({ username, appearance, place }),
     [username, appearance, place],
   );
+
   const payloadRef = useRef(payload);
   const subscribedRef = useRef(false);
   const messagesRef = useRef<ChatMessage[]>([]);
@@ -221,46 +238,61 @@ export function MultiplayerProvider({
     const worldChannel = supabase.channel("osun-life:world", {
       config: { presence: { key: userId } },
     });
-    
-    // ✅ Update state so it's available to consumers
-    setTimeout(() => setChannel(worldChannel), 0); 
+
+    // Update state so it is available to consumers.
+    setTimeout(() => setChannel(worldChannel), 0);
 
     const sync = () => {
-      const state = worldChannel.presenceState<PresencePayload>();
+      // Explicitly type the presence state instead of passing an
+      // unsupported generic to presenceState().
+      const state = worldChannel.presenceState() as Record<
+        string,
+        PresencePayload[]
+      >;
+
       const next: RemotePlayer[] = [];
+
       for (const [key, metas] of Object.entries(state)) {
         if (key === userId) continue;
+
         const meta = metas[metas.length - 1];
         if (!meta) continue;
+
         next.push({
           userId: key,
           username: cleanUsername(meta.username),
           appearance: sanitizeAppearance(meta.appearance),
           place:
-            typeof meta.place === "string" ? meta.place.slice(0, 40) : "private",
+            typeof meta.place === "string"
+              ? meta.place.slice(0, 40)
+              : "private",
         });
       }
+
       setPlayers(next);
       setOnlineCount(Math.max(1, Object.keys(state).length));
     };
 
-    worldChannel.on("presence", { event: "sync" }, sync).subscribe((status) => {
-      if (status === "SUBSCRIBED") {
-        subscribedRef.current = true;
-        void worldChannel.track(payloadRef.current);
-      }
-    });
+    worldChannel
+      .on("presence", { event: "sync" }, sync)
+      .subscribe((status: string) => {
+        if (status === "SUBSCRIBED") {
+          subscribedRef.current = true;
+          void worldChannel.track(payloadRef.current);
+        }
+      });
 
     return () => {
       subscribedRef.current = false;
-      setChannel(null); // ✅ Clear channel on unmount
+      setChannel(null);
       void supabase.removeChannel(worldChannel);
     };
   }, [supabase, userId]);
 
-  // Tell everyone when you move to another place or change your look
+  // Tell everyone when you move to another place or change your look.
   useEffect(() => {
     payloadRef.current = payload;
+
     if (subscribedRef.current && channel) {
       void channel.track(payload);
     }
@@ -276,7 +308,9 @@ export function MultiplayerProvider({
         .select("*")
         .order("created_at", { ascending: false })
         .limit(200);
+
       if (cancelled || error || !data) return;
+
       setMessages((current) =>
         mergeMessages(current, (data as MessageRow[]).map(toMessage)),
       );
@@ -294,10 +328,17 @@ export function MultiplayerProvider({
         },
         (change: RealtimePostgresChangesPayload<MessageRow>) => {
           const row = change.new as MessageRow | undefined;
+
           if (!row || !row.id) return;
+
           const message = toMessage(row);
+
           setMessages((current) => mergeMessages(current, [message]));
-          onIncomingRef.current?.(message.senderUsername, message.body);
+
+          onIncomingRef.current?.(
+            message.senderUsername,
+            message.body,
+          );
         },
       )
       .subscribe();
@@ -311,7 +352,10 @@ export function MultiplayerProvider({
   const sendMessage = useCallback(
     async (to: ThreadTarget, body: string): Promise<SendResult> => {
       const text = body.trim().slice(0, 500);
-      if (!text) return { ok: false, reason: "Type a message first." };
+
+      if (!text) {
+        return { ok: false, reason: "Type a message first." };
+      }
 
       const { data, error } = await supabase
         .from("messages")
@@ -324,11 +368,16 @@ export function MultiplayerProvider({
         .single();
 
       if (error || !data) {
-        return { ok: false, reason: "Could not send. Try again." };
+        return {
+          ok: false,
+          reason: "Could not send. Try again.",
+        };
       }
+
       setMessages((current) =>
         mergeMessages(current, [toMessage(data as MessageRow)]),
       );
+
       return { ok: true };
     },
     [supabase, userId],
@@ -342,16 +391,21 @@ export function MultiplayerProvider({
           m.recipientId === userId &&
           !m.readAt,
       );
+
       if (!hasUnread) return;
 
       const now = new Date().toISOString();
+
       setMessages((current) =>
         current.map((m) =>
-          m.senderId === otherUserId && m.recipientId === userId && !m.readAt
+          m.senderId === otherUserId &&
+          m.recipientId === userId &&
+          !m.readAt
             ? { ...m, readAt: now }
             : m,
         ),
       );
+
       await supabase
         .from("messages")
         .update({ read_at: now })
@@ -364,14 +418,18 @@ export function MultiplayerProvider({
 
   const conversations = useMemo<Conversation[]>(() => {
     const byPlayer = new Map<string, Conversation>();
+
     for (const message of messages) {
       const mine = message.senderId === userId;
       const otherId = mine ? message.recipientId : message.senderId;
+
       const otherName = mine
         ? message.recipientUsername
         : message.senderUsername;
+
       const unread = !mine && !message.readAt ? 1 : 0;
       const entry = byPlayer.get(otherId);
+
       if (!entry) {
         byPlayer.set(otherId, {
           userId: otherId,
@@ -384,6 +442,7 @@ export function MultiplayerProvider({
         entry.unread += unread;
       }
     }
+
     return [...byPlayer.values()].sort((a, b) =>
       b.last.createdAt.localeCompare(a.last.createdAt),
     );
@@ -411,7 +470,7 @@ export function MultiplayerProvider({
       openThread: setActiveThread,
       sendMessage,
       markRead,
-      channel, // ✅ Passed safely via state
+      channel,
     }),
     [
       userId,
@@ -424,7 +483,7 @@ export function MultiplayerProvider({
       activeThread,
       sendMessage,
       markRead,
-      channel, // ✅ Add to dependencies
+      channel,
     ],
   );
 

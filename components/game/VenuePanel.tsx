@@ -99,7 +99,7 @@ export default function VenuePanel({
 
   if (!open) {
     return (
-      <div className="pointer-events-none absolute inset-x-0 bottom-44 flex flex-col items-center gap-2 px-3">
+      <div className="pointer-events-none absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6.5rem)] flex flex-col items-center gap-2 px-3">
         <p className="rounded-full bg-black/45 px-3 py-1 text-[10px] font-semibold text-white backdrop-blur">
           Tap the floor to walk
         </p>
@@ -119,7 +119,7 @@ export default function VenuePanel({
   }
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-44 flex justify-center px-2 sm:px-4">
+    <div className="pointer-events-none absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6.5rem)] flex justify-center px-2 sm:px-4">
       <div className="pointer-events-auto flex max-h-[calc(100dvh-19rem)] w-full max-w-xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#141f2b]/95 text-white shadow-[0_-12px_40px_rgba(0,0,0,0.45)] backdrop-blur-md">
         {/* Header */}
         <div className="flex shrink-0 items-center gap-3 px-4 pb-2 pt-3">

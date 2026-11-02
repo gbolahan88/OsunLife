@@ -26,7 +26,7 @@ export default function Hud({
   const { onlineCount } = useMultiplayer();
 
   return (
-    <header className="pointer-events-none absolute inset-x-0 top-0 z-20 px-3 pt-[calc(env(safe-area-inset-top)+12px)]">
+    <header className="pointer-events-none absolute inset-x-0 top-0 z-30 px-3 pt-[calc(env(safe-area-inset-top)+12px)]">
       <div className="mx-auto max-w-190">
         {/* Main HUD */}
         <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-full border border-white/80 bg-white/95 px-3 py-2 shadow-[0_8px_28px_rgba(24,50,39,0.16)] backdrop-blur-md sm:gap-4 sm:px-5">

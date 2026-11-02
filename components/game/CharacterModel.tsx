@@ -31,7 +31,7 @@ type CharacterModelProps = {
  * TUNING
  * SIGN.thigh / SIGN.calf: flip (1 <-> -1) if the sit pose bends the wrong way.
  * SIGN.arm: flip if arms swing WITH the same-side leg while walking.
- * ARM_FORWARD: flip (-1 <-> 1) if arms go BACKWARD when working / showering.
+ * ARM_FORWARD: flip (-1 <-> 1) if arms go BACKWARD when working / showering / dancing.
  */
 const SIGN = { thigh: 1, calf: -1, arm: 1 };
 const ARM_FORWARD = -1;
@@ -44,7 +44,7 @@ const SIT_DROP = 0.25;
 const LAY_LIFT = 0.08;
 
 /** Arm raise (radians) for each pose. 0 = hanging, ~1.25 = reaching forward, ~2.4 = hands above head. */
-const REACH = { sit: 0.5, work: 1.25, shower: 2.4 };
+const REACH = { sit: 0.5, work: 1.25, shower: 2.4, dance: 2.3 };
 
 const LEG_BONES = {
   thighL: "CC_Base_L_Thigh_04",
@@ -207,6 +207,7 @@ export default function CharacterModel({
 
     // 1) Whole-body transform
     let targetRotX = 0;
+    let targetRotZ = 0;
     let targetY = 0;
     let targetZ = 0;
     if (currentAction === "lay") {
@@ -217,8 +218,12 @@ export default function CharacterModel({
       targetY = -targetHeight * SIT_DROP;
     } else if (currentAction === "walk") {
       targetY = Math.abs(Math.sin(t * 10)) * targetHeight * 0.015;
+    } else if (currentAction === "dance") {
+      targetY = Math.abs(Math.sin(t * 6)) * targetHeight * 0.03;  // bounce on the beat
+      targetRotZ = Math.sin(t * 3) * 0.08;                         // sway side to side
     }
     g.rotation.x = THREE.MathUtils.lerp(g.rotation.x, targetRotX, k);
+    g.rotation.z = THREE.MathUtils.lerp(g.rotation.z, targetRotZ, k);
     g.position.y = THREE.MathUtils.lerp(g.position.y, targetY, k);
     g.position.z = THREE.MathUtils.lerp(g.position.z, targetZ, k);
 
@@ -231,19 +236,6 @@ export default function CharacterModel({
       a.thighL = a.thighR = 1.5 * SIGN.thigh;
       a.calfL = a.calfR = 1.5 * SIGN.calf;
       armAngleL = armAngleR = ARM_FORWARD * REACH.sit; // hands resting toward the lap
-    } else if (currentAction === "dance") {
-      // ✅ BOT DANCE LOGIC: Bobbing and arm swinging
-      const beat = Math.sin(t * 8); // Fast 8Hz beat
-      const sway = Math.cos(t * 4);
-      
-      a.thighL = beat * 0.2;
-      a.thighR = -beat * 0.2;
-      
-      armAngleL = ARM_FORWARD * 1.8 + beat * 0.5; // Arms up
-      armAngleR = ARM_FORWARD * 1.8 - beat * 0.5;
-      
-      targetY = Math.abs(beat) * targetHeight * 0.05; // Bob up and down
-      g.rotation.z = sway * 0.05; // Slight body sway
     } else if (currentAction === "walk") {
       const swing = Math.sin(t * 8);
       a.thighL = swing * 0.6 * SIGN.thigh;
@@ -262,6 +254,15 @@ export default function CharacterModel({
       const s = Math.sin(t * 7);
       armAngleL = ARM_FORWARD * REACH.shower + s * 0.18;
       armAngleR = ARM_FORWARD * REACH.shower - s * 0.18;
+    } else if (currentAction === "dance") {
+      // Knees bounce alternately, hands in the air
+      const s = Math.sin(t * 6);
+      a.thighL = Math.max(0, s) * 0.5 * SIGN.thigh;
+      a.thighR = Math.max(0, -s) * 0.5 * SIGN.thigh;
+      a.calfL = Math.max(0, s) * 0.7 * SIGN.calf;
+      a.calfR = Math.max(0, -s) * 0.7 * SIGN.calf;
+      armAngleL = ARM_FORWARD * (REACH.dance + s * 0.35);
+      armAngleR = ARM_FORWARD * (REACH.dance - s * 0.35);
     }
 
     (Object.keys(a) as LegKey[]).forEach((key) => {

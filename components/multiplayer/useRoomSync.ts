@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { peekBrowserClient } from "@/lib/supabase-browser";
 
-export type RoomAction = "idle" | "walk" | "dance";
+export type RoomAction = "idle" | "walk" | "sit" | "dance";
 export type RoomPose = { x: number; z: number; ry: number; action: RoomAction };
 export type RemotePose = RoomPose & { at: number };
 
@@ -14,7 +14,7 @@ export type RoomEvent =
   | { t: "buy"; u: string; a: string }
   | { t: "react"; u: string; r: string };
 
-const ACTIONS: RoomAction[] = ["idle", "walk", "dance"];
+const ACTIONS: RoomAction[] = ["idle", "walk", "sit", "dance"];
 const LIMIT_X = 12;
 const LIMIT_Z = 9;
 const SEND_EVERY_MS = 150;
