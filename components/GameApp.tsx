@@ -128,7 +128,6 @@ export default function GameApp({
     setAppearance((prev) => ({ ...prev, [key]: value }));
   };
 
-  // Stable callback: never fires during render
   const handleEditingChange = useCallback((editing: boolean) => {
     setIsEditingFurniture(editing);
   }, []);
@@ -141,14 +140,12 @@ export default function GameApp({
     return () => window.clearTimeout(timeout);
   }, [taskNotice]);
 
-  // A new chat message arrived from another player
   const handleIncomingMessage = useCallback((from: string, body: string) => {
     const preview = body.length > 60 ? `${body.slice(0, 60)}…` : body;
     setTaskNotice(`💬 ${from}: ${preview}`);
   }, []);
 
   function handleTabChange(newTab: Tab) {
-    // The phone is an overlay, so the map or building stays behind it
     if (newTab === "phone") {
       setPhoneOpen((open) => !open);
       return;
@@ -156,7 +153,6 @@ export default function GameApp({
     setPhoneOpen(false);
 
     if (newTab === "buy") {
-      // Inside home: internal Buy Mode handles it, do nothing here
       if (tab === "home") return;
       setTab("buy");
       return;
@@ -176,7 +172,6 @@ export default function GameApp({
   const phase = getDayPhase(clock.hour);
   const mood = getMood(needs);
 
-  // Where other players see you: "map", a building id, or "private" (home, shop)
   const place =
     tab === "map"
       ? "map"
@@ -200,6 +195,7 @@ export default function GameApp({
         <div className="relative h-full overflow-hidden bg-[var(--bg)]">
           <DayNightOverlay phase={phase} />
 
+          {/* Top HUD is ALWAYS visible */}
           <Hud
             time={formatClock(clock)}
             mood={mood.label}
@@ -232,9 +228,7 @@ export default function GameApp({
             />
           )}
 
-          {tab === "map" && (
-            <MapTasks completedTasks={completedTasks} now={now} />
-          )}
+          {tab === "map" && <MapTasks completedTasks={completedTasks} now={now} />}
 
           {tab === "buy" && (
             <FurnitureShop
@@ -275,6 +269,7 @@ export default function GameApp({
                 buildingName={lastBuilding}
                 onExit={() => setTab("map")}
                 onOpenPhone={() => setPhoneOpen(true)}
+                appearance={appearance}
               />
             )}
 
@@ -319,11 +314,13 @@ export default function GameApp({
             />
           )}
 
+          {/* ✅ NeedsPanel is ALWAYS rendered, but collapses if in a building */}
           {!isEditingFurniture && (
             <NeedsPanel
               needs={needs}
               appearance={appearance}
               onProfileClick={() => setIsProfileOpen(true)}
+              minimized={tab === "home" && lastBuildingId !== "home" && lastBuildingId !== "okefia"}
             />
           )}
 
@@ -363,6 +360,7 @@ export default function GameApp({
             />
           )}
 
+          {/* ✅ BottomNav is ALWAYS visible */}
           {!isEditingFurniture && (
             <BottomNav
               active={phoneOpen ? "phone" : tab}

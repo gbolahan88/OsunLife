@@ -3,14 +3,49 @@
 import { ArrowLeft } from "lucide-react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { Html, OrbitControls } from "@react-three/drei";
-import { Suspense, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from "react";
 import * as THREE from "three";
 import CharacterModel from "@/components/game/CharacterModel";
+import { VenueFxLayer, useVenueFx } from "@/components/game/ClubFx";
+import VenuePanel from "@/components/game/VenuePanel";
+import {
+  CLUB_BOXES,
+  ClubLights,
+  DanceFloor,
+  ZeusClubProps,
+  type ObstacleBox,
+} from "@/components/game/ZeusClub";
 import {
   useMultiplayer,
   type RemotePlayer,
 } from "@/components/multiplayer/MultiplayerProvider";
-import { DEFAULT_CHARACTER_APPEARANCE } from "@/store/characterAppearance";
+import {
+  useRoomSync,
+  type RemotePose,
+  type RoomAction,
+  type RoomEvent,
+  type RoomPose,
+} from "@/components/multiplayer/useRoomSync";
+import {
+  CharacterAppearance,
+  DEFAULT_CHARACTER_APPEARANCE,
+} from "@/store/characterAppearance";
+import { useGameStore } from "@/store/gameStore";
+import {
+  REACTIONS,
+  findAction,
+  isVenue,
+  type VenueAction,
+  type VenueSpot,
+} from "@/lib/venue";
 
 type FixtureKind =
   | "desk" | "chair" | "bed" | "medical-bed" | "shelf" | "counter"
@@ -44,26 +79,24 @@ const INTERIORS: Record<string, InteriorConfig> = {
     { kind: "sofa", x: -5, z: 1, color: "#9e302b" }, { kind: "sofa", x: 5, z: 1, color: "#9e302b" },
     { kind: "table", x: 0, z: 3, color: "#a57b43" },
   ]},
-  market: { 
-    subtitle: "Oja Oba — Living marketplace", 
+  market: {
+    subtitle: "Oja Oba — Living marketplace",
     floor: "#6b4c3a", // Dirt floor
-    wall: "#e9d5ae", 
-    accent: "#bc6345", 
+    wall: "#e9d5ae",
+    accent: "#bc6345",
     fixtures: [
-      // Top Row
-      { kind: "stall", x: -6, z: -5, color: "#bc6345" }, // Red/Yellow canopy
-      { kind: "stall", x: 0, z: -5, color: "#28776e" },  // Green/White canopy
-      { kind: "stall", x: 6, z: -5, color: "#bc6345" },  // Red/Yellow canopy
-      
-      // Middle Row (Produce tables)
+      // Top row
+      { kind: "stall", x: -6, z: -5, color: "#bc6345" },
+      { kind: "stall", x: 0, z: -5, color: "#28776e" },
+      { kind: "stall", x: 6, z: -5, color: "#bc6345" },
+      // Middle row (produce tables)
       { kind: "table", x: -4, z: 0, color: "#5c3a21" },
       { kind: "table", x: 4, z: 0, color: "#5c3a21" },
-      
-      // Bottom Row
-      { kind: "stall", x: -6, z: 5, color: "#d7a63e" },  // Yellow canopy
-      { kind: "stall", x: 0, z: 5, color: "#318578" },   // Green canopy
-      { kind: "stall", x: 6, z: 5, color: "#bc6345" },   // Red canopy
-    ]
+      // Bottom row
+      { kind: "stall", x: -6, z: 5, color: "#d7a63e" },
+      { kind: "stall", x: 0, z: 5, color: "#318578" },
+      { kind: "stall", x: 6, z: 5, color: "#bc6345" },
+    ],
   },
   "adire-tower": { subtitle: "Adire fashion gallery", floor: "#d8c9b5", wall: "#f1e7d9", accent: "#28776e", fixtures: [
     ...[-5, 0, 5].map((x, i) => ({ kind: "clothing-rack" as const, x, z: -2, color: ["#28776e", "#c65a70", "#d39d3b"][i] })),
@@ -117,29 +150,15 @@ const INTERIORS: Record<string, InteriorConfig> = {
     { kind: "bar", x: 0, z: -5, color: "#2fc4b2" }, ...[-6, 0, 6].map(x => ({ kind: "table" as const, x, z: 0, color: "#477c77" })),
     { kind: "sofa", x: -5, z: 4, color: "#477c77" }, { kind: "sofa", x: 5, z: 4, color: "#477c77" },
   ]},
-  // Fixed: this key was "zeus-club", which never matched the building id "zeus-club"
-  "zeus-club": { 
-    subtitle: "Zeus Club dance floor", 
-    floor: "#0a0a0f", 
-    wall: "#1a1a2e", 
-    accent: "#8b5cf6", 
+  // The DJ booth, bar, VIP sofa, staff and dancing crowd are drawn by ZeusClubProps (ZeusClub.tsx)
+  "zeus-club": {
+    subtitle: "Zeus Club dance floor",
+    floor: "#1d1530",
+    wall: "#241a3a",
+    accent: "#8b5cf6",
     fixtures: [
-      // DJ Booth & Screen
-      { kind: "counter", x: 0, z: -7, color: "#2b2740" }, 
-      { kind: "shelf", x: -4, z: -7.5, color: "#111" },
-      { kind: "shelf", x: 4, z: -7.5, color: "#111" },
-      
-      // Dance Lights
       ...[-6, 0, 6].map((x, i) => ({ kind: "dance-light" as const, x, z: -2, color: ["#35d9ff", "#f04f9b", "#8b5cf6"][i] })),
-      
-      // The Bar
-      { kind: "bar", x: -8, z: 0, color: "#8b5cf6", rotation: Math.PI / 4 },
-      
-      // Lounge Area (Red Sofas)
-      { kind: "sofa", x: 7, z: 2, color: "#8b0000", rotation: -Math.PI / 4 }, 
-      { kind: "sofa", x: 9, z: 4, color: "#8b0000", rotation: -Math.PI / 4 },
-      { kind: "table", x: 7, z: 5, color: "#1a1a2e" },
-    ]
+    ],
   },
   olaiya: { subtitle: "Olaiya Flyover rest point", floor: "#888a86", wall: "#d2d0c6", accent: "#d3a03a", fixtures: [
     { kind: "counter", x: 0, z: -4 }, ...[-4, 0, 4].map(x => ({ kind: "chair" as const, x, z: 1 })), { kind: "plant", x: -8, z: 4 }, { kind: "plant", x: 8, z: 4 },
@@ -207,23 +226,23 @@ function FixtureModel({ fixture }: { fixture: Fixture }) {
   if (kind === "stall" || kind === "display") {
     // Split the color to make it striped (e.g. Red and White)
     const color2 = color === "#bc6345" ? "#f5e6c6" : color === "#28776e" ? "#f5e6c6" : "#d1b272";
-    
+
     return <group position={[x, 0, z]}>
-      {/* Wooden Posts */}
+      {/* Wooden posts */}
       {[-1.4, 1.4].map(px => [-1.4, 1.4].map(pz => (
         <mesh key={`${px}-${pz}`} position={[px, 1.5, pz]} castShadow>
           <boxGeometry args={[0.15, 3, 0.15]} />
           <meshStandardMaterial color="#4a331f" />
         </mesh>
       )))}
-      
-      {/* Counter Table */}
+
+      {/* Counter table */}
       <mesh position={[0, 1.2, 0]} castShadow>
         <boxGeometry args={[3, 0.15, 3]} />
         <meshStandardMaterial color="#8c684a" />
       </mesh>
-      
-      {/* Striped Canopy (Angled) */}
+
+      {/* Striped canopy (angled) */}
       <group position={[0, 3.2, 0]}>
         {Array.from({ length: 6 }).map((_, i) => (
           <mesh key={i} position={[-1.25 + i * 0.5, 0, 0]} rotation={[0, 0, 0.1]} castShadow>
@@ -232,8 +251,8 @@ function FixtureModel({ fixture }: { fixture: Fixture }) {
           </mesh>
         ))}
       </group>
-      
-      {/* Produce/Crates on the counter */}
+
+      {/* Produce crates on the counter */}
       <mesh position={[-0.8, 1.4, 0]} castShadow>
         <boxGeometry args={[0.8, 0.4, 1.2]} />
         <meshStandardMaterial color="#a67c52" />
@@ -242,16 +261,16 @@ function FixtureModel({ fixture }: { fixture: Fixture }) {
         <boxGeometry args={[1, 0.4, 0.8]} />
         <meshStandardMaterial color="#a67c52" />
       </mesh>
-      
-      {/* Small fruits/spheres on the crates */}
+
+      {/* Small fruits on the crates */}
       {[-0.8, -0.6, -1.0].map((fx, i) => (
-        <mesh key={i} position={[fx, 1.65, 0]} castShadow>
+        <mesh key={`a-${i}`} position={[fx, 1.65, 0]} castShadow>
           <sphereGeometry args={[0.12, 8, 8]} />
           <meshStandardMaterial color={i % 2 === 0 ? "#d83b2d" : "#5e9b46"} />
         </mesh>
       ))}
       {[0.8, 1.0, 0.6].map((fx, i) => (
-        <mesh key={i} position={[fx, 1.65, 0.2]} castShadow>
+        <mesh key={`b-${i}`} position={[fx, 1.65, 0.2]} castShadow>
           <sphereGeometry args={[0.12, 8, 8]} />
           <meshStandardMaterial color={i % 2 === 0 ? "#df9f28" : "#d83b2d"} />
         </mesh>
@@ -307,6 +326,8 @@ function FixtureModel({ fixture }: { fixture: Fixture }) {
 
   return null;
 }
+
+/* ───────────── Palace people (simple figures) ───────────── */
 
 type PersonRole = "customer" | "seller" | "food-seller" | "herbalist" | "king" | "chief" | "guard";
 type PersonProps = { role: PersonRole; index: number; start: [number, number, number]; color?: string; moving?: boolean };
@@ -388,24 +409,6 @@ function Person({ role, index, start, color, moving = true }: PersonProps) {
   </group>;
 }
 
-function MarketGoods({ position, color }: { position: [number, number, number]; color: string }) {
-  const produce = ["#d83b2d", "#df9f28", "#5e9b46", "#9c3d2d", "#e2c34d"];
-  return <group position={position}>
-    {Array.from({ length: 12 }, (_, i) => <mesh key={i} position={[(i % 4) * .58 - .9, .18 + Math.floor(i / 4) * .05, Math.floor(i / 4) * .48 - .5]} castShadow>
-      <sphereGeometry args={[.24, 8, 7]} /><meshStandardMaterial color={i % 3 === 0 ? color : produce[i % produce.length]} />
-    </mesh>)}
-  </group>;
-}
-
-function MarketSign({ x, z, text, color }: { x: number; z: number; text: string; color: string }) {
-  return <group position={[x, 4.05, z]}>
-    <mesh><boxGeometry args={[3.8, .75, .14]} /><meshStandardMaterial color={color} /></mesh>
-    <mesh position={[0, -.02, .09]}><boxGeometry args={[3.55, .55, .04]} /><meshStandardMaterial color="#f5e6c6" /></mesh>
-    {/* Graphic-like sign stripes are deliberately geometric so no font dependency is required. */}
-    {[-1.15, -.75, -.35, .05, .45, .85].map((px, i) => <mesh key={px} position={[px, 0, .13]}><boxGeometry args={[.12, .28 + (i % 2) * .12, .025]} /><meshStandardMaterial color={color} /></mesh>)}
-  </group>;
-}
-
 function PalaceWallDecor({ accent }: { accent: string }) {
   return <group>
     {[-8, -5.5, -3, 0, 3, 5.5, 8].map((x, i) => <group key={x} position={[x, 3.2, -8.05]}>
@@ -416,37 +419,6 @@ function PalaceWallDecor({ accent }: { accent: string }) {
     </group>)}
     {[-7, -3.5, 0, 3.5, 7].map(x => <mesh key={x} position={[x, 1.1, -7.95]}><boxGeometry args={[.18, 1.3, .1]} /><meshStandardMaterial color="#d6b66f" /></mesh>)}
   </group>;
-}
-
-function MarketActivity() {
-  const shoppers = useMemo(() => [
-    { role: "customer" as const, start: [-4.5, 0, 0.2] as [number, number, number] },
-    { role: "customer" as const, start: [3.7, 0, 1] as [number, number, number] },
-    { role: "customer" as const, start: [-1.5, 0, 5.4] as [number, number, number] },
-    { role: "customer" as const, start: [5.1, 0, -1.2] as [number, number, number] },
-    { role: "customer" as const, start: [-5.1, 0, -1.1] as [number, number, number] },
-  ], []);
-  return <>
-    {shoppers.map((p, i) => <Person key={`shopper-${i}`} role={p.role} index={i} start={p.start} />)}
-    <Person role="seller" index={6} start={[-7, 0, -2.25]} moving />
-    <Person role="seller" index={7} start={[0, 0, -2.25]} moving />
-    <Person role="herbalist" index={8} start={[7, 0, -2.25]} color="#6f8a43" moving />
-    <Person role="food-seller" index={9} start={[-7, 0, 4.6]} color="#c85a35" moving />
-    <Person role="seller" index={10} start={[0, 0, 4.6]} color="#c18a32" moving />
-    <Person role="food-seller" index={11} start={[7, 0, 4.6]} color="#bd4b39" moving />
-    <MarketGoods position={[-7, 2.95, -2.65]} color="#d83b2d" />
-    <MarketGoods position={[0, 2.95, -2.65]} color="#5e9b46" />
-    <MarketGoods position={[7, 2.95, -2.65]} color="#df9f28" />
-    <MarketGoods position={[-7, 2.95, 4.35]} color="#df9f28" />
-    <MarketGoods position={[0, 2.95, 4.35]} color="#d83b2d" />
-    <MarketGoods position={[7, 2.95, 4.35]} color="#5e9b46" />
-    <MarketSign x={-7} z={-4.05} text="GROCERIES" color="#b84d3d" />
-    <MarketSign x={0} z={-4.05} text="TALILOT SHOP" color="#28776e" />
-    <MarketSign x={7} z={-4.05} text="AGBO" color="#88733b" />
-    <MarketSign x={-7} z={2.95} text="STREET FOOD" color="#b84d3d" />
-    <MarketSign x={0} z={2.95} text="PROVISIONS" color="#28776e" />
-    <MarketSign x={7} z={2.95} text="FOOD SELLER" color="#b84d3d" />
-  </>;
 }
 
 function PalaceActivity() {
@@ -464,32 +436,256 @@ function PalaceActivity() {
   </>;
 }
 
-/* ───────────── Other players in this building ───────────── */
+/* ───────────── Walking inside a building ───────────── */
 
-const PLAYER_HEIGHT = 2.4;
+const PERSON_HEIGHT = 2;
+const PLAYER_RADIUS = 0.45;
+const WALK_SPEED = 5;
+const SPAWN_X = 0;
+const SPAWN_Z = 6.2;
 const MAX_VISIBLE_PLAYERS = 18;
+const ROOM = { minX: -10.4, maxX: 10.4, minZ: -7.4, maxZ: 7.4 };
 
-function RemotePlayerFigure({
-  player,
-  position,
-  onChat,
+type Box = ObstacleBox;
+
+/** Half-width / half-depth of each fixture, used to stop players walking through furniture. */
+const FOOTPRINTS: Partial<Record<FixtureKind, [number, number]>> = {
+  desk: [1.6, 0.9], "office-desk": [1.6, 0.9], table: [1.7, 1.3],
+  bed: [1.6, 2.5], "medical-bed": [1.6, 2.5], chair: [0.75, 0.75],
+  shelf: [1.4, 0.4], counter: [2.85, 0.85], cashier: [2.85, 0.85], bar: [2.85, 0.85],
+  plant: [0.65, 0.65], sofa: [2.25, 0.9], throne: [1.5, 1.25],
+  stall: [1.6, 1.6], display: [1.75, 1.25], "clothing-rack": [2, 0.35],
+  "car-lift": [1.9, 3], "stadium-seat": [1.2, 0.9], altar: [2, 1],
+  locker: [1.1, 0.5], "dance-light": [0.9, 0.9], treadmill: [0.8, 2],
+};
+
+function buildObstacles(buildingId: string, fixtures: Fixture[]): Box[] {
+  const boxes: Box[] = [];
+  for (const fixture of fixtures) {
+    const footprint = FOOTPRINTS[fixture.kind];
+    if (!footprint) continue;
+    const rotation = fixture.rotation ?? 0;
+    const c = Math.abs(Math.cos(rotation));
+    const s = Math.abs(Math.sin(rotation));
+    boxes.push({
+      x: fixture.x,
+      z: fixture.z,
+      hw: c * footprint[0] + s * footprint[1],
+      hd: s * footprint[0] + c * footprint[1],
+    });
+  }
+  if (buildingId === "zeus-club") boxes.push(...CLUB_BOXES);
+  return boxes;
+}
+
+/** Push a circle out of every box and keep it inside the room. */
+function resolveCircle(boxes: Box[], startX: number, startZ: number, radius = PLAYER_RADIUS): [number, number] {
+  let x = startX;
+  let z = startZ;
+  for (let pass = 0; pass < 3; pass += 1) {
+    for (const box of boxes) {
+      const nearestX = Math.min(Math.max(x, box.x - box.hw), box.x + box.hw);
+      const nearestZ = Math.min(Math.max(z, box.z - box.hd), box.z + box.hd);
+      const dx = x - nearestX;
+      const dz = z - nearestZ;
+      const distance = Math.hypot(dx, dz);
+      if (distance >= radius) continue;
+      if (distance > 1e-6) {
+        x += (dx / distance) * (radius - distance);
+        z += (dz / distance) * (radius - distance);
+      } else {
+        // Centre is inside the box: leave by the nearest side
+        const pushX = box.hw + radius - Math.abs(x - box.x);
+        const pushZ = box.hd + radius - Math.abs(z - box.z);
+        if (pushX < pushZ) x += (x >= box.x ? 1 : -1) * pushX;
+        else z += (z >= box.z ? 1 : -1) * pushZ;
+      }
+    }
+  }
+  return [
+    Math.min(Math.max(x, ROOM.minX), ROOM.maxX),
+    Math.min(Math.max(z, ROOM.minZ), ROOM.maxZ),
+  ];
+}
+
+function lerpAngle(from: number, to: number, amount: number) {
+  let diff = (to - from) % (Math.PI * 2);
+  if (diff > Math.PI) diff -= Math.PI * 2;
+  if (diff < -Math.PI) diff += Math.PI * 2;
+  return from + diff * amount;
+}
+
+function NameTag({
+  name,
+  you = false,
+  bubble,
+  onClick,
 }: {
-  player: RemotePlayer;
-  position: [number, number, number];
-  onChat: (player: RemotePlayer) => void;
+  name: string;
+  you?: boolean;
+  bubble?: string;
+  onClick?: () => void;
 }) {
-  const group = useRef<THREE.Group>(null);
+  return (
+    <Html position={[0, PERSON_HEIGHT + 0.5, 0]} center zIndexRange={[100, 0]}>
+      <div className="flex flex-col items-center gap-1">
+        {bubble && (
+          <span className="rounded-full bg-white/95 px-2.5 py-0.5 text-lg leading-tight shadow-lg">
+            {bubble}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={!onClick}
+          aria-label={you ? "You" : `Message ${name}`}
+          className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-[10px] font-bold text-white shadow-lg backdrop-blur ${
+            you ? "border-[#20b978]/70 bg-[#0f3a2b]/85" : "border-white/40 bg-[#101c2b]/85"
+          }`}
+        >
+          {you ? `${name} (you)` : name}
+        </button>
+      </div>
+    </Html>
+  );
+}
 
-  // A gentle idle sway so they look alive
-  useFrame(({ clock }) => {
-    if (!group.current) return;
-    group.current.rotation.y = Math.sin(clock.elapsedTime * 0.6 + position[0]) * 0.12;
+function LocalPlayer({
+  appearance,
+  username,
+  bubble,
+  boxes,
+  dancing,
+  localRef,
+  targetRef,
+}: {
+  appearance: CharacterAppearance;
+  username: string;
+  bubble?: string;
+  boxes: Box[];
+  dancing: boolean;
+  localRef: MutableRefObject<RoomPose>;
+  targetRef: MutableRefObject<{ x: number; z: number } | null>;
+}) {
+  const pos = useRef<THREE.Group>(null);
+  const rot = useRef<THREE.Group>(null);
+  const facing = useRef(0);
+  const stuck = useRef(0);
+  const actionRef = useRef<RoomAction>("idle");
+  const [action, setAction] = useState<RoomAction>("idle");
+  const [spawn] = useState<[number, number, number]>(() => {
+    const [x, z] = resolveCircle(boxes, SPAWN_X, SPAWN_Z);
+    return [x, 0, z];
+  });
+
+  useFrame((_, delta) => {
+    const g = pos.current;
+    const r = rot.current;
+    if (!g || !r) return;
+
+    let moving = false;
+    const target = targetRef.current;
+    if (target) {
+      const dx = target.x - g.position.x;
+      const dz = target.z - g.position.z;
+      const distance = Math.hypot(dx, dz);
+
+      if (distance < 0.08) {
+        targetRef.current = null;
+        stuck.current = 0;
+      } else {
+        const step = Math.min(distance, WALK_SPEED * delta);
+        const [nx, nz] = resolveCircle(
+          boxes,
+          g.position.x + (dx / distance) * step,
+          g.position.z + (dz / distance) * step,
+        );
+        const moved = Math.hypot(nx - g.position.x, nz - g.position.z);
+        g.position.x = nx;
+        g.position.z = nz;
+        facing.current = Math.atan2(dx, dz);
+        moving = true;
+
+        // Pressed against a wall or table: stop trying
+        if (moved < step * 0.25) {
+          stuck.current += delta;
+          if (stuck.current > 0.35) {
+            targetRef.current = null;
+            stuck.current = 0;
+            moving = false;
+          }
+        } else {
+          stuck.current = 0;
+        }
+      }
+    }
+
+    r.rotation.y = lerpAngle(r.rotation.y, facing.current, Math.min(1, delta * 12));
+
+    const next: RoomAction = moving ? "walk" : dancing ? "dance" : "idle";
+    if (next !== actionRef.current) {
+      actionRef.current = next;
+      setAction(next);
+    }
+    localRef.current = { x: g.position.x, z: g.position.z, ry: r.rotation.y, action: next };
   });
 
   return (
-    <group position={position}>
+    <group ref={pos} position={spawn}>
+      <group ref={rot}>
+        <CharacterModel appearance={appearance} targetHeight={PERSON_HEIGHT} action={action} />
+      </group>
+      <NameTag name={username} you bubble={bubble} />
+    </group>
+  );
+}
+
+function RemotePlayerFigure({
+  player,
+  slot,
+  bubble,
+  remote,
+  onChat,
+}: {
+  player: RemotePlayer;
+  slot: [number, number];
+  bubble?: string;
+  remote: MutableRefObject<Map<string, RemotePose>>;
+  onChat: (player: RemotePlayer) => void;
+}) {
+  const pos = useRef<THREE.Group>(null);
+  const rot = useRef<THREE.Group>(null);
+  const actionRef = useRef<RoomAction>("idle");
+  const [action, setAction] = useState<RoomAction>("idle");
+  // Until their first position arrives they wait in the front row
+  const [start] = useState<[number, number, number]>(() => [slot[0], 0, slot[1]]);
+
+  useFrame((_, delta) => {
+    const g = pos.current;
+    const r = rot.current;
+    if (!g || !r) return;
+
+    const pose = remote.current.get(player.userId);
+    const k = Math.min(1, delta * 10);
+    let next: RoomAction = "idle";
+
+    if (pose) {
+      g.position.x += (pose.x - g.position.x) * k;
+      g.position.z += (pose.z - g.position.z) * k;
+      r.rotation.y = lerpAngle(r.rotation.y, pose.ry, k);
+      next = pose.action;
+    }
+
+    if (next !== actionRef.current) {
+      actionRef.current = next;
+      setAction(next);
+    }
+  });
+
+  return (
+    <group ref={pos} position={start}>
       <group
-        ref={group}
+        ref={rot}
         onClick={(event) => {
           event.stopPropagation();
           onChat(player);
@@ -497,32 +693,27 @@ function RemotePlayerFigure({
         onPointerOver={() => { document.body.style.cursor = "pointer"; }}
         onPointerOut={() => { document.body.style.cursor = "auto"; }}
       >
-        <CharacterModel appearance={player.appearance} targetHeight={PLAYER_HEIGHT} action="idle" />
+        <CharacterModel appearance={player.appearance} targetHeight={PERSON_HEIGHT} action={action} />
         {/* Invisible, easier-to-tap hit area */}
-        <mesh position={[0, PLAYER_HEIGHT / 2, 0]}>
-          <cylinderGeometry args={[0.9, 0.9, PLAYER_HEIGHT, 8]} />
+        <mesh position={[0, PERSON_HEIGHT / 2, 0]}>
+          <cylinderGeometry args={[0.9, 0.9, PERSON_HEIGHT, 8]} />
           <meshBasicMaterial transparent opacity={0} depthWrite={false} />
         </mesh>
       </group>
-      <Html position={[0, PLAYER_HEIGHT + 0.5, 0]} center zIndexRange={[100, 0]}>
-        <button
-          type="button"
-          onClick={() => onChat(player)}
-          aria-label={`Message ${player.username}`}
-          className="whitespace-nowrap rounded-full border border-white/40 bg-[#101c2b]/85 px-2.5 py-1 text-[10px] font-bold text-white shadow-lg backdrop-blur"
-        >
-          {player.username}
-        </button>
-      </Html>
+      <NameTag name={player.username} bubble={bubble} onClick={() => onChat(player)} />
     </group>
   );
 }
 
 function RemotePlayers({
   players,
+  bubbles,
+  remote,
   onChat,
 }: {
   players: RemotePlayer[];
+  bubbles: Record<string, string>;
+  remote: MutableRefObject<Map<string, RemotePose>>;
   onChat: (player: RemotePlayer) => void;
 }) {
   const sorted = useMemo(
@@ -539,8 +730,9 @@ function RemotePlayers({
         <RemotePlayerFigure
           key={player.userId}
           player={player}
-          // Front of the room, in rows of nine, clear of the furniture
-          position={[-9.6 + (index % 9) * 2.4, 0, 6.2 + Math.floor(index / 9) * 1.5]}
+          slot={[-9.6 + (index % 9) * 2.4, 6.2 + Math.floor(index / 9) * 1.5]}
+          bubble={bubbles[player.userId]}
+          remote={remote}
           onChat={onChat}
         />
       ))}
@@ -548,220 +740,105 @@ function RemotePlayers({
   );
 }
 
-function ZeusClubScene({ players, onChat }: { players: RemotePlayer[]; onChat: (player: RemotePlayer) => void }) {
-  // 1. Define the dancing crowd positions
-  const crowd = useMemo(() => [
-    { x: 0, z: 2, color: "#d6a23d", rot: 0 },
-    { x: -2, z: 1, color: "#b84d3d", rot: Math.PI / 4 },
-    { x: 2, z: 1, color: "#3c8273", rot: -Math.PI / 4 },
-    { x: -3, z: 4, color: "#496a9a", rot: Math.PI / 2 },
-    { x: 3, z: 4, color: "#853c6c", rot: -Math.PI / 2 },
-    { x: 0, z: 5, color: "#eee0bd", rot: Math.PI },
-    { x: -5, z: 0, color: "#d6a23d", rot: Math.PI / 3 },
-    { x: 5, z: 0, color: "#b84d3d", rot: -Math.PI / 3 },
-  ], []);
+/* ───────────── Market crowd ───────────── */
 
-  return <>
-    {/* Dark nightclub background */}
-    <color attach="background" args={["#05050a"]} />
-    
-    {/* ✅ Brighter ambient so characters are visible */}
-    <ambientLight intensity={5} color="#8b9bb4" />
-    
-    {/* Dynamic Neon Lights (Boosted) */}
-    <pointLight position={[0, 5, 2]} intensity={8} color="#8b5cf6" distance={25} decay={1.5} />
-    <pointLight position={[-6, 3, 0]} intensity={6} color="#d6336c" distance={20} decay={1.5} />
-    <pointLight position={[6, 3, 0]} intensity={6} color="#2fc4b2" distance={20} decay={1.5} />
-    
-    {/* A massive spotlight straight down on the dance floor */}
-    <spotLight 
-      position={[0, 12, 2]} 
-      angle={1.2} 
-      penumbra={0.8} 
-      intensity={40} 
-      color="#ffffff" 
-      castShadow 
-      target-position={[0, 0, 2]}
-    />
+type Trader = { x: number; z: number; color: string };
+type Passerby = { color: string; speed: number; radius: number; offset: number };
 
-    {/* Dark Glossy Dance Floor */}
-    <mesh position={[0, -0.15, 2]} receiveShadow>
-      <boxGeometry args={[18, .3, 14]} />
-      <meshStandardMaterial color="#0a0a0f" metalness={0.9} roughness={0.1} />
-    </mesh>
+const MARKET_TRADERS: Trader[] = [
+  { x: -6, z: -6.5, color: "#d6a23d" },
+  { x: 0, z: -6.5, color: "#b84d3d" },
+  { x: 6, z: -6.5, color: "#3c8273" },
+  { x: -6, z: 6.5, color: "#496a9a" },
+  { x: 0, z: 6.5, color: "#853c6c" },
+  { x: 6, z: 6.5, color: "#d6a23d" },
+];
 
-    {/* ✅ Realistic DJ Booth & Screen */}
-    <group position={[0, 0, -6]}>
-      {/* The glowing screen */}
-      <mesh position={[0, 4, -2]}>
-        <boxGeometry args={[10, 6, 0.2]} />
-        <meshStandardMaterial color="#32cd32" emissive="#32cd32" emissiveIntensity={0.8} />
-      </mesh>
-      {/* DJ Table */}
-      <mesh position={[0, 1.5, 0]}>
-        <boxGeometry args={[6, 1.5, 2]} />
-        <meshStandardMaterial color="#111" />
-      </mesh>
-      <mesh position={[0, 2.3, 0]}>
-        <boxGeometry args={[6.2, 0.1, 2.2]} />
-        <meshStandardMaterial color="#ff007f" emissive="#ff007f" emissiveIntensity={2} />
-      </mesh>
-      {/* Speakers */}
-      {[-4, 4].map(x => (
-        <group key={x} position={[x, 2, -1]}>
-          <mesh><boxGeometry args={[1.5, 4, 1.5]} /><meshStandardMaterial color="#1a1a2e" /></mesh>
-          {[-1, 0, 1].map(y => (
-            <mesh key={y} position={[0, y, 0.8]} rotation={[Math.PI / 2, 0, 0]}>
-              {/* ✅ Rotation moved to the <mesh> above */}
-              <cylinderGeometry args={[0.4, 0.4, 0.1, 16]} />
-              <meshStandardMaterial color="#222" emissive="#8b5cf6" emissiveIntensity={1} />
-            </mesh>
-          ))}
-        </group>
-      ))}
-    </group>
+const MARKET_PASSERSBY: Passerby[] = [
+  { color: "#b84d3d", speed: 0.5, radius: 3, offset: 0 },
+  { color: "#3c8273", speed: 0.4, radius: 4, offset: Math.PI },
+  { color: "#d6a23d", speed: 0.6, radius: 2.5, offset: Math.PI },
+  { color: "#496a9a", speed: 0.45, radius: 5, offset: -Math.PI / 2 },
+];
 
-    {/* ✅ The Bar */}
-    <group position={[-8, 0, -2]} rotation={[0, Math.PI / 4, 0]}>
-      <mesh position={[0, 1.5, 0]}>
-        <boxGeometry args={[5, 2.5, 1.5]} />
-        <meshStandardMaterial color="#1a1a2e" />
-      </mesh>
-      <mesh position={[0, 2.8, 0]}>
-        <boxGeometry args={[5.2, 0.1, 1.7]} />
-        <meshStandardMaterial color="#ff007f" emissive="#ff007f" emissiveIntensity={3} />
-      </mesh>
-      {/* Back Bar Shelf & Bottles */}
-      <mesh position={[0, 3, -1]}>
-        <boxGeometry args={[5, 4, 0.2]} />
-        <meshStandardMaterial color="#05050a" />
-      </mesh>
-      {Array.from({ length: 8 }).map((_, i) => (
-        <mesh key={i} position={[-2 + i * 0.6, 3.5, -0.8]}>
-          <cylinderGeometry args={[0.08, 0.08, 0.5]} />
-          <meshStandardMaterial color={["#ff007f", "#00f0ff", "#ffd700"][i % 3]} emissive={["#ff007f", "#00f0ff", "#ffd700"][i % 3]} emissiveIntensity={1.5} />
-        </mesh>
-      ))}
-    </group>
-
-    {/* ✅ Red Lounge Sofas */}
-    <group position={[8, 0, 2]} rotation={[0, -Math.PI / 4, 0]}>
-      <mesh position={[0, 0.5, 0]}>
-        <boxGeometry args={[4, 1, 1.5]} />
-        <meshStandardMaterial color="#8b0000" roughness={0.9} />
-      </mesh>
-      <mesh position={[0, 1.5, -0.6]}>
-        <boxGeometry args={[4, 1.5, 0.3]} />
-        <meshStandardMaterial color="#8b0000" roughness={0.9} />
-      </mesh>
-    </group>
-
-    {/* ✅ The Dancing Crowd */}
-    {crowd.map((bot, i) => (
-      <group key={i} position={[bot.x, 0, bot.z]} rotation={[0, bot.rot, 0]}>
-        <CharacterModel 
-          appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: bot.color }} 
-          targetHeight={1.8} 
-          action="dance" // 👈 Triggers the dance animation!
-        />
-      </group>
-    ))}
-
-    {/* Other real players in the club */}
-    <RemotePlayers players={players} onChat={onChat} />
-  </>;
-}
-
-function MarketCrowd() {
-  const people = useMemo(() => [
-    // Traders behind the top row of stalls (Standing still)
-    { x: -6, z: -6.5, color: "#d6a23d", isWalking: false, isTrader: true },
-    { x: 0, z: -6.5, color: "#b84d3d", isWalking: false, isTrader: true },
-    { x: 6, z: -6.5, color: "#3c8273", isWalking: false, isTrader: true },
-    
-    // Traders behind the bottom row of stalls (Standing still)
-    { x: -6, z: 6.5, color: "#496a9a", isWalking: false, isTrader: true },
-    { x: 0, z: 6.5, color: "#853c6c", isWalking: false, isTrader: true },
-    { x: 6, z: 6.5, color: "#d6a23d", isWalking: false, isTrader: true },
-
-    // Passersby (Moving in circles around the market)
-    { color: "#b84d3d", isTrader: false, speed: 0.5, radius: 3, offset: 0 },
-    { color: "#3c8273", isTrader: false, speed: 0.4, radius: 4, offset: Math.PI },
-    { color: "#d6a23d", isTrader: false, speed: 0.6, radius: 2.5, offset: Math.PI / 1 },
-    { color: "#496a9a", isTrader: false, speed: 0.45, radius: 5, offset: -Math.PI / 2 },
-  ], []);
-
-  return (
-    <group>
-      {people.map((person, i) => {
-        if (person.isTrader) {
-          // Traders stay in place
-          return (
-            <group key={i} position={[person.x!, 0, person.z!]} rotation={[0, person.z! > 0 ? Math.PI : 0, 0]}>
-              <CharacterModel appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: person.color }} targetHeight={1.8} action="idle" />
-            </group>
-          );
-        } else {
-          // Passersby move
-          return <MovingPasserby key={i} {...person as any} />;
-        }
-      })}
-    </group>
-  );
-}
-
-// ✅ New component that actually moves the character
-function MovingPasserby({ color, speed, radius, offset }: { color: string; speed: number; radius: number; offset: number }) {
+function MovingPasserby({ color, speed, radius, offset }: Passerby) {
   const groupRef = useRef<THREE.Group>(null);
 
   useFrame(({ clock }) => {
     if (!groupRef.current) return;
     const t = clock.elapsedTime * speed + offset;
-    
-    // Move in a circle
-    const x = Math.cos(t) * radius;
-    const z = Math.sin(t) * radius;
-    groupRef.current.position.set(x, 0, z);
-
-    // Make them face the direction they are walking
-    // The derivative of (cos(t), sin(t)) gives the direction
-    const dx = -Math.sin(t) * radius;
-    const dz = Math.cos(t) * radius;
-    groupRef.current.rotation.y = Math.atan2(dx, dz);
+    groupRef.current.position.set(Math.cos(t) * radius, 0, Math.sin(t) * radius);
+    // Face the way they are walking
+    groupRef.current.rotation.y = Math.atan2(-Math.sin(t) * radius, Math.cos(t) * radius);
   });
 
   return (
     <group ref={groupRef}>
-      <CharacterModel appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: color }} targetHeight={1.8} action="walk" />
+      <CharacterModel appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: color }} targetHeight={PERSON_HEIGHT} action="walk" />
     </group>
   );
 }
 
-//Update InteriorScene to use the new Zeus Club Scene
-function InteriorScene({ config, buildingId, players, onChat }: {
+function MarketCrowd() {
+  return (
+    <Suspense fallback={null}>
+      <group>
+        {MARKET_TRADERS.map((trader, i) => (
+          <group key={`trader-${i}`} position={[trader.x, 0, trader.z]} rotation={[0, trader.z > 0 ? Math.PI : 0, 0]}>
+            <CharacterModel appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: trader.color }} targetHeight={PERSON_HEIGHT} action="idle" />
+          </group>
+        ))}
+        {MARKET_PASSERSBY.map((walker, i) => (
+          <MovingPasserby key={`walker-${i}`} {...walker} />
+        ))}
+      </group>
+    </Suspense>
+  );
+}
+
+/* ───────────── The room ───────────── */
+
+function InteriorScene({
+  config,
+  buildingId,
+  players,
+  bubbles,
+  localId,
+  remote,
+  onChat,
+  appearance,
+  username,
+  boxes,
+  dancing,
+  localRef,
+  targetRef,
+  onFloorTap,
+}: {
   config: InteriorConfig;
   buildingId: string;
   players: RemotePlayer[];
+  bubbles: Record<string, string>;
+  localId: string;
+  remote: MutableRefObject<Map<string, RemotePose>>;
   onChat: (player: RemotePlayer) => void;
+  appearance: CharacterAppearance;
+  username: string;
+  boxes: Box[];
+  dancing: boolean;
+  localRef: MutableRefObject<RoomPose>;
+  targetRef: MutableRefObject<{ x: number; z: number } | null>;
+  onFloorTap: (x: number, z: number) => void;
 }) {
   const isClub = buildingId === "zeus-club";
   const isMarket = buildingId === "market";
 
   return <>
-    <color attach="background" args={[isClub ? "#05050a" : isMarket ? "#87CEEB" : "#c8d7d2"]} />
-    
-    {/* ✅ Lighting Logic */}
+    <color attach="background" args={[isClub ? "#0b0816" : isMarket ? "#87CEEB" : "#c8d7d2"]} />
+
     {isClub ? (
-      // Dark Club Lighting
-      <>
-        <ambientLight intensity={0.6} color="#8b9bb4" />
-        <pointLight position={[0, 5, 2]} intensity={8} color="#8b5cf6" distance={25} decay={1.5} />
-        <pointLight position={[-6, 3, 0]} intensity={6} color="#d6336c" distance={20} decay={1.5} />
-        <pointLight position={[6, 3, 0]} intensity={6} color="#2fc4b2" distance={20} decay={1.5} />
-        <spotLight position={[0, 12, 2]} angle={1.2} penumbra={0.8} intensity={15} color="#ffffff" castShadow target-position={[0, 0, 2]} />
-      </>
+      <ClubLights />
     ) : (
-      // Bright Sunlight for Market and other buildings
+      // Bright sunlight for the market and other buildings
       <>
         <ambientLight intensity={1.2} color="#ffffff" />
         <directionalLight position={[10, 15, 5]} intensity={2.5} color="#fff4d4" castShadow />
@@ -769,12 +846,22 @@ function InteriorScene({ config, buildingId, players, onChat }: {
       </>
     )}
 
-    <mesh position={[0, -.15, 0]} receiveShadow>
+    {/* Tap the floor to walk there */}
+    <mesh
+      position={[0, -.15, 0]}
+      receiveShadow
+      onClick={(event) => onFloorTap(event.point.x, event.point.z)}
+    >
       <boxGeometry args={[23, .3, 17]} />
-      <meshStandardMaterial color={config.floor} roughness={isMarket ? 1 : 0.9} metalness={isClub ? 0.6 : 0} />
+      <meshStandardMaterial
+        color={config.floor}
+        roughness={isMarket ? 1 : isClub ? 0.55 : 0.9}
+        metalness={isClub ? 0.1 : 0}
+      />
     </mesh>
-    
-    {/* Walls (Hidden for the open-air market) */}
+    {isClub && <DanceFloor />}
+
+    {/* Walls (hidden for the open-air market) */}
     {!isMarket && (
       <>
         <mesh position={[0, 2.4, -8.3]} receiveShadow><boxGeometry args={[23, 5, .35]} /><meshStandardMaterial color={config.wall} roughness={.9} /></mesh>
@@ -785,26 +872,137 @@ function InteriorScene({ config, buildingId, players, onChat }: {
     )}
 
     {config.fixtures.map((fixture, index) => <FixtureModel key={`${fixture.kind}-${index}`} fixture={fixture} />)}
-    {buildingId === "market" && <MarketCrowd />}
+    {isClub && <ZeusClubProps />}
+    {isMarket && <MarketCrowd />}
     {buildingId === "palace" && <PalaceActivity />}
-    <RemotePlayers players={players} onChat={onChat} />
+
+    <Suspense fallback={null}>
+      <LocalPlayer
+        appearance={appearance}
+        username={username}
+        bubble={bubbles[localId]}
+        boxes={boxes}
+        dancing={dancing}
+        localRef={localRef}
+        targetRef={targetRef}
+      />
+    </Suspense>
+    <RemotePlayers players={players} bubbles={bubbles} remote={remote} onChat={onChat} />
   </>;
 }
 
-export default function BuildingInterior({ buildingId, buildingName, onExit, onOpenPhone }: {
-  buildingId: string; buildingName: string; onExit: () => void;
+export default function BuildingInterior({
+  buildingId,
+  buildingName,
+  appearance = DEFAULT_CHARACTER_APPEARANCE,
+  onExit,
+  onOpenPhone,
+}: {
+  buildingId: string;
+  buildingName: string;
+  appearance?: CharacterAppearance;
+  onExit: () => void;
   /** Called after a player is tapped so the phone opens on their chat */
   onOpenPhone?: () => void;
 }) {
   const config = INTERIORS[buildingId] ?? DEFAULT_INTERIOR;
-  const { players, openThread } = useMultiplayer();
+  const venue = isVenue(buildingId);
+  const { userId, username, players, openThread } = useMultiplayer();
   const here = useMemo(
     () => players.filter((player) => player.place === buildingId),
     [players, buildingId]
   );
+  const hereRef = useRef(here);
+  useEffect(() => {
+    hereRef.current = here;
+  }, [here]);
 
-  const [, forceNoop] = useState(0);
-  void forceNoop;
+  const cash = useGameStore((state) => state.cash);
+  const spendCash = useGameStore((state) => state.spendCash);
+
+  const [dancing, setDancing] = useState(false);
+  const [bubbles, setBubbles] = useState<Record<string, string>>({});
+  const bubbleTimers = useRef(new Map<string, number>());
+  const localRef = useRef<RoomPose>({ x: SPAWN_X, z: SPAWN_Z, ry: 0, action: "idle" });
+  const targetRef = useRef<{ x: number; z: number } | null>(null);
+  const boxes = useMemo(() => buildObstacles(buildingId, config.fixtures), [buildingId, config]);
+
+  const fx = useVenueFx(buildingName);
+  const pushFx = fx.push;
+
+  useEffect(() => {
+    const timers = bubbleTimers.current;
+    return () => timers.forEach((id) => window.clearTimeout(id));
+  }, []);
+
+  const showBubble = useCallback((id: string, emoji: string) => {
+    setBubbles((current) => ({ ...current, [id]: emoji }));
+    const timers = bubbleTimers.current;
+    const old = timers.get(id);
+    if (old) window.clearTimeout(old);
+    timers.set(
+      id,
+      window.setTimeout(() => {
+        setBubbles((current) => {
+          const next = { ...current };
+          delete next[id];
+          return next;
+        });
+        timers.delete(id);
+      }, 2600),
+    );
+  }, []);
+
+  // Something another player did in this room
+  const handleRoomEvent = useCallback(
+    (event: RoomEvent) => {
+      // Only react to people we can see are in this building
+      const name = hereRef.current.find((player) => player.userId === event.u)?.username;
+      if (!name) return;
+
+      if (event.t === "react") {
+        const reaction = REACTIONS.find((item) => item.id === event.r);
+        if (reaction) showBubble(event.u, reaction.emoji);
+        return;
+      }
+
+      const action = findAction(event.a, buildingId);
+      if (action) pushFx(action, name);
+    },
+    [buildingId, pushFx, showBubble],
+  );
+
+  const { remote, sendEvent } = useRoomSync(buildingId, userId, localRef, handleRoomEvent);
+
+  const handleFloorTap = useCallback((x: number, z: number) => {
+    targetRef.current = { x, z };
+    setDancing(false);
+  }, []);
+
+  const handleBuy = useCallback(
+    (action: VenueAction): { ok: true } | { ok: false; reason: string } => {
+      if (!spendCash(action.price)) return { ok: false, reason: "Not enough cash." };
+      pushFx(action, username || "You");
+      sendEvent({ t: "buy", u: userId, a: action.id });
+      return { ok: true };
+    },
+    [pushFx, sendEvent, spendCash, userId, username],
+  );
+
+  const handleReact = useCallback(
+    (reactionId: string) => {
+      const reaction = REACTIONS.find((item) => item.id === reactionId);
+      if (!reaction) return;
+      showBubble(userId, reaction.emoji);
+      sendEvent({ t: "react", u: userId, r: reaction.id });
+    },
+    [sendEvent, showBubble, userId],
+  );
+
+  const handleSpot = useCallback((spot: VenueSpot) => {
+    targetRef.current = { x: spot.x, z: spot.z };
+    setDancing(false);
+  }, []);
 
   function chatWith(player: RemotePlayer) {
     openThread({ userId: player.userId, username: player.username });
@@ -814,8 +1012,26 @@ export default function BuildingInterior({ buildingId, buildingName, onExit, onO
   return <div className="absolute inset-0 z-20 overflow-hidden bg-[#c8d7d2]">
     <Canvas shadows dpr={[1, 1.5]} camera={{ position: [0, 10, 19], fov: 48, near: .1, far: 100 }} gl={{ antialias: true }}>
       <OrbitControls makeDefault enablePan={false} enableRotate enableZoom minDistance={12} maxDistance={27} maxPolarAngle={Math.PI / 2.05} target={[0, 1.5, 0]} />
-      <InteriorScene config={config} buildingId={buildingId} players={here} onChat={chatWith} />
+      <InteriorScene
+        config={config}
+        buildingId={buildingId}
+        players={here}
+        bubbles={bubbles}
+        localId={userId}
+        remote={remote}
+        onChat={chatWith}
+        appearance={appearance}
+        username={username || "You"}
+        boxes={boxes}
+        dancing={dancing}
+        localRef={localRef}
+        targetRef={targetRef}
+        onFloorTap={handleFloorTap}
+      />
     </Canvas>
+
+    {venue && <VenueFxLayer fx={fx} />}
+
     <div className="pointer-events-none absolute inset-0">
       <div className="pointer-events-auto absolute left-3 top-[calc(env(safe-area-inset-top)+7rem)] flex max-w-[calc(100%-1.5rem)] items-center gap-2 sm:left-4">
         <button type="button" onClick={onExit} aria-label="Return to map" title="Return to map" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/90 bg-white/95 text-[#263d31] shadow-lg transition-transform hover:scale-105">
@@ -828,6 +1044,40 @@ export default function BuildingInterior({ buildingId, buildingName, onExit, onO
           <h1 className="truncate text-sm font-extrabold text-[#263d31]">{buildingName}</h1>
         </div>
       </div>
+
+      {venue ? (
+        <VenuePanel
+          venueId={buildingId}
+          venueName={buildingName}
+          cash={cash}
+          here={here}
+          dancing={dancing}
+          onToggleDance={() => setDancing((current) => !current)}
+          onReact={handleReact}
+          onBuy={handleBuy}
+          onWalkToSpot={handleSpot}
+          onChat={chatWith}
+        />
+      ) : (
+        <div className="pointer-events-none absolute inset-x-0 bottom-44 flex flex-col items-center gap-2 px-3">
+          <p className="rounded-full bg-black/45 px-3 py-1 text-[10px] font-semibold text-white backdrop-blur">
+            Tap the floor to walk
+          </p>
+          <button
+            type="button"
+            onClick={() => setDancing((current) => !current)}
+            aria-pressed={dancing}
+            className={`pointer-events-auto flex h-11 items-center gap-2 rounded-full border px-5 text-[13px] font-extrabold shadow-lg backdrop-blur transition-colors ${
+              dancing
+                ? "border-[#f04f9b] bg-[#f04f9b] text-white"
+                : "border-white/80 bg-white/95 text-[#263d31]"
+            }`}
+          >
+            <span aria-hidden>💃</span>
+            {dancing ? "Stop dancing" : "Dance"}
+          </button>
+        </div>
+      )}
     </div>
   </div>;
 }

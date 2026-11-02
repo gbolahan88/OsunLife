@@ -115,18 +115,18 @@ export const BUILDING_INFO: Record<string, BuildingInfo> = {
   },
   berrymist: {
     area: "Osogbo",
-    blurb: "BerryMist Lounge. An open-air bar with cocktails, bar stools and soft lights.",
-    tags: ["Cocktails", "Open bar", "Chill"],
+    blurb: "BerryMist Lounge. An open-air bar with cocktails, bottle service and soft lights.",
+    tags: ["Signature Cocktail", "Bottle Service (VIP)", "Order the Gold Bottle (Dorime!)", "Buy the Room a Round", "Take Over BerryMist for the Night"],
   },
   "circle-lounge": {
     area: "Osogbo",
     blurb: "Circle Lounge. A premium open bar with a gold-lit counter and umbrella tables.",
-    tags: ["Premium bar", "Cocktails", "Lounge"],
+    tags: ["Signature Cocktail", "Bottle Service (VIP)", "Order the Gold Bottle (Dorime!)", "Buy the Room a Round", "Take Over Circle Lounge for the Night"],
   },
   "zeus-club": {
     area: "Osogbo",
-    blurb: "Zeus Club. Lights, music and a dance floor that stays full till late.",
-    tags: ["Dance floor", "Nightlife", "Music"],
+    blurb: "Zeus Club. Lights, music and a dance floor that stays full till late. The DJ and the Hype Man are waiting for your money.",
+    tags: ["Spray Money", "Dance Till Dawn", "Pay the Hype Man", "Pay the DJ for a Shout-out", "Signature Cocktail", "Bottle Service (VIP)", "Order the Gold Bottle (Dorime!)", "Buy the Whole Room a Round", "Take Over Zeus Club for the Night", "Meet Other Players"],
   },
   okefia: {
     area: "Okefia",

@@ -84,6 +84,8 @@ type MultiplayerValue = {
   openThread: (target: ThreadTarget | null) => void;
   sendMessage: (to: ThreadTarget, body: string) => Promise<SendResult>;
   markRead: (otherUserId: string) => Promise<void>;
+  /** ✅ The live Supabase channel for broadcasting club events */
+  channel: RealtimeChannel | null;
 };
 
 /* ───────────────────────────── helpers ───────────────────────────── */
@@ -154,6 +156,7 @@ const defaultValue: MultiplayerValue = {
   openThread: () => {},
   sendMessage: noopSend,
   markRead: async () => {},
+  channel: null, // ✅ Added default
 };
 
 const MultiplayerContext = createContext<MultiplayerValue>(defaultValue);
@@ -183,7 +186,6 @@ export function MultiplayerProvider({
   onIncomingMessage?: (fromUsername: string, body: string) => void;
   children: ReactNode;
 }) {
-  // Typed as BrowserClient — no longer `any`.
   const supabase = useMemo(
     () => getBrowserClient(supabaseUrl, supabaseKey),
     [supabaseUrl, supabaseKey],
@@ -193,13 +195,15 @@ export function MultiplayerProvider({
   const [onlineCount, setOnlineCount] = useState(1);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeThread, setActiveThread] = useState<ThreadTarget | null>(null);
+  
+  // ✅ Store channel in state so we can pass it via context safely
+  const [channel, setChannel] = useState<RealtimeChannel | null>(null);
 
   const payload = useMemo<PresencePayload>(
     () => ({ username, appearance, place }),
     [username, appearance, place],
   );
   const payloadRef = useRef(payload);
-  const channelRef = useRef<RealtimeChannel | null>(null);
   const subscribedRef = useRef(false);
   const messagesRef = useRef<ChatMessage[]>([]);
   const onIncomingRef = useRef(onIncomingMessage);
@@ -214,16 +218,15 @@ export function MultiplayerProvider({
 
   /* ── Presence: who is online, and where ── */
   useEffect(() => {
-    // `channel()` does NOT accept a `config` wrapper.
-    // Presence key comes from `subscribe(..., { key })`.
-    const channel = supabase.channel("osun-life:world", {
+    const worldChannel = supabase.channel("osun-life:world", {
       config: { presence: { key: userId } },
     });
-    channelRef.current = channel;
+    
+    // ✅ Update state so it's available to consumers
+    setTimeout(() => setChannel(worldChannel), 0); 
 
     const sync = () => {
-      // channel is now typed => presenceState<PresencePayload>() is valid
-      const state = channel.presenceState<PresencePayload>();
+      const state = worldChannel.presenceState<PresencePayload>();
       const next: RemotePlayer[] = [];
       for (const [key, metas] of Object.entries(state)) {
         if (key === userId) continue;
@@ -241,25 +244,27 @@ export function MultiplayerProvider({
       setOnlineCount(Math.max(1, Object.keys(state).length));
     };
 
-    channel.on("presence", { event: "sync" }, sync).subscribe((status) => {
+    worldChannel.on("presence", { event: "sync" }, sync).subscribe((status) => {
       if (status === "SUBSCRIBED") {
         subscribedRef.current = true;
-        void channel.track(payloadRef.current);
+        void worldChannel.track(payloadRef.current);
       }
     });
 
     return () => {
       subscribedRef.current = false;
-      channelRef.current = null;
-      void supabase.removeChannel(channel);
+      setChannel(null); // ✅ Clear channel on unmount
+      void supabase.removeChannel(worldChannel);
     };
   }, [supabase, userId]);
 
   // Tell everyone when you move to another place or change your look
   useEffect(() => {
     payloadRef.current = payload;
-    if (subscribedRef.current) void channelRef.current?.track(payload);
-  }, [payload]);
+    if (subscribedRef.current && channel) {
+      void channel.track(payload);
+    }
+  }, [payload, channel]);
 
   /* ── Chat: history + live incoming messages ── */
   useEffect(() => {
@@ -287,8 +292,6 @@ export function MultiplayerProvider({
           table: "messages",
           filter: `recipient_id=eq.${userId}`,
         },
-        // Explicitly typed — silences the implicit-any on older SDKs
-        // and matches what the typed overload supplies anyway.
         (change: RealtimePostgresChangesPayload<MessageRow>) => {
           const row = change.new as MessageRow | undefined;
           if (!row || !row.id) return;
@@ -408,6 +411,7 @@ export function MultiplayerProvider({
       openThread: setActiveThread,
       sendMessage,
       markRead,
+      channel, // ✅ Passed safely via state
     }),
     [
       userId,
@@ -420,6 +424,7 @@ export function MultiplayerProvider({
       activeThread,
       sendMessage,
       markRead,
+      channel, // ✅ Add to dependencies
     ],
   );
 
