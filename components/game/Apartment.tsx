@@ -263,7 +263,7 @@ function WallLight({ layoutId, isNight, position, rotation }: {
   } else if (layoutId === "room-parlour") {
     lightColor = "#fff0db";
     intensity = 10;
-    distance = 40;
+    distance = 50;
     baseColor = "#a0a0a0";
   }
 
@@ -1272,6 +1272,52 @@ function PlayerCharacter({
   );
 }
 
+function RoomWallLight({
+  isNight,
+  position,
+  rotation,
+  color = "#fff8e7",
+  intensity = 1.2,
+}: {
+  isNight: boolean;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  color?: string;
+  intensity?: number;
+}) {
+  if (!isNight) return null;
+
+  return (
+    <group position={position} rotation={rotation}>
+      {/* Mount plate */}
+      <mesh position={[0, 0, 0.02]}>
+        <boxGeometry args={[0.2, 0.2, 0.04]} />
+        <meshStandardMaterial color="#222" metalness={0.6} roughness={0.4} />
+      </mesh>
+
+      {/* Glowing bulb */}
+      <mesh position={[0, 0, 0.12]}>
+        <sphereGeometry args={[0.1, 16, 16]} />
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={3}
+          toneMapped={false}
+        />
+      </mesh>
+
+      {/* The light it casts */}
+      <pointLight
+        color={color}
+        intensity={intensity}
+        distance={6}
+        decay={2}
+        position={[0, 0, 0.3]}
+      />
+    </group>
+  );
+}
+
 function ApartmentShell({ layout, furniture, onSelectFurniture, onFloorClick, movingUid, isValid, onExitToMap, isNight }: {
   layout: ApartmentLayout; furniture: PlacedFurniture[];
   onSelectFurniture: (uid: string) => void;
@@ -1297,26 +1343,67 @@ function ApartmentShell({ layout, furniture, onSelectFurniture, onFloorClick, mo
 
       {layout.walls.map((wall) => <ApartmentWallView key={wall.id} wall={wall} openings={layout.openings} wallColor={wallColor} onExitToMap={onExitToMap} />)}
 
-      {longWalls.map((wall) => {
-        const midX = (wall.start[0] + wall.end[0]) / 2;
-        const midZ = (wall.start[1] + wall.end[1]) / 2;
+      {/* ✅ Lights on every wall of every kitchen and bathroom */}
+      {layout.rooms
+        .filter((room) => room.kind === "kitchen" || room.kind === "bathroom")
+        .flatMap((room) => {
+          // Four edges of the room (one light in the middle of each)
+          const cx = room.x + room.width / 2;
+          const cz = room.z + room.depth / 2;
+          const edges: { pos: [number, number, number]; rot: [number, number, number] }[] = [
+            // North wall
+            { pos: [cx, 2.2, room.z + 0.2], rot: [0, Math.PI, 0] },
+            // West wall
+            { pos: [room.x + 0.2, 1.8, cz], rot: [0, Math.PI / 2, 0] },
+            // East wall
+            { pos: [room.x + room.width - 0.2, 1.8, cz], rot: [0, -Math.PI / 2, 0] },
+          ];
+          return edges.map((edge, i) => (
+            <RoomWallLight
+              key={`${room.id}-light-${i}`}
+              isNight={isNight}
+              position={edge.pos}
+              rotation={edge.rot}
+              intensity={room.kind === "kitchen" ? 2.5 : 2.5}
+            />
+          ));
+        })}
+
+      {/* ✅ Keep the existing two big lights on the longest walls */}
+      {longWalls.flatMap((wall) => {
+        const dx = wall.end[0] - wall.start[0];
+        const dz = wall.end[1] - wall.start[1];
+        const length = Math.hypot(dx, dz);
+        if (length < 0.001) return [];
 
         const room = layout.rooms[0];
         const centerX = room ? room.x + room.width / 2 : 0;
         const centerZ = room ? room.z + room.depth / 2 : 0;
 
-        const angleToCenter = Math.atan2(centerX - midX, centerZ - midZ);
-        const rotationY = angleToCenter;
+        // ✅ EXACT LIGHT POSITIONS PER WALL (0 = start of wall, 1 = end of wall)
+        const LIGHT_POSITIONS_BY_WALL: Record<string, number[]> = {
+          back: [0.05, 0.5],      // 3 lights on the "back" wall
+          front: [0.3, 0.7],          // 2 lights on the "front" wall
+          left: [0.25, 0.55, 0.75],         // 2 lights on the "left" wall
+          right: [0.25, 0.75],        // 2 lights on the "right" wall
+        };
 
-        return (
-          <WallLight
-            key={`light-${wall.id}`}
-            layoutId={layout.id}
-            isNight={isNight}
-            position={[midX, 2.0, midZ]}
-            rotation={[0, rotationY, 0]}
-          />
-        );
+        const positions = LIGHT_POSITIONS_BY_WALL[wall.id] ?? [0.5]; // fallback: 1 centered
+
+        return positions.map((t, i) => {
+          const x = wall.start[0] + dx * t;
+          const z = wall.start[1] + dz * t;
+          const rotationY = Math.atan2(centerX - x, centerZ - z);
+          return (
+            <WallLight
+              key={`light-${wall.id}-${i}`}
+              layoutId={layout.id}
+              isNight={isNight}
+              position={[x, 2.0, z]}
+              rotation={[0, rotationY, 0]}
+            />
+          );
+        });
       })}
 
       {layout.id === "two-bedroom" && <WoodenStaircase />}

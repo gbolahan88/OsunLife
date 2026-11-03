@@ -1,6 +1,6 @@
 // lib/buildingInfo.ts
 
-export type TransportId = "trek" | "danfo" | "keke" | "okada" | "taxi";
+export type TransportId = "trek" | "korope" | "keke" | "okada" | "taxi";
 
 export type TransportMode = {
   id: TransportId;
@@ -14,7 +14,7 @@ export type TransportMode = {
 
 export const TRANSPORT_MODES: TransportMode[] = [
   { id: "trek", name: "Trek", emoji: "🚶", price: 0, speed: 120 },
-  { id: "danfo", name: "Danfo", emoji: "🚌", price: 500, speed: 300 },
+  { id: "korope", name: "Korope", emoji: "🚌", price: 500, speed: 300 },
   { id: "keke", name: "Keke", emoji: "🛺", price: 800, speed: 360 },
   { id: "okada", name: "Okada", emoji: "🏍️", price: 1500, speed: 520 },
   { id: "taxi", name: "Taxi", emoji: "🚕", price: 3000, speed: 760 },

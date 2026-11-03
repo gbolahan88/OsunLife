@@ -2227,7 +2227,7 @@ type MapControlsLike = {
   update: () => void;
 };
 
-function FitMapCamera({ active }: { active: boolean }) {
+function FitMapCamera({ active, isMobile }: { active: boolean; isMobile: boolean }) {
   const camera = useThree((state) => state.camera);
   const controls = useThree((state) => state.controls) as MapControlsLike | null;
   const { width, height } = useThree((state) => state.size);
@@ -2242,23 +2242,28 @@ function FitMapCamera({ active }: { active: boolean }) {
       verticalHalfExtent / halfFovTangent,
     ) * 1.15;
 
-    camera.position.copy(MAP_CAMERA_DIRECTION).multiplyScalar(fitDistance);
+     // ✅ Zoom in on mobile by shrinking the distance
+    const zoomFactor = isMobile ? 0.42 : 1; // 0.65 = closer, 0.85 = a bit closer, 0.5 = much closer
+
+    camera.position.copy(MAP_CAMERA_DIRECTION).multiplyScalar(fitDistance * zoomFactor);
     controls.target.set(0, 0, 0);
     controls.update();
-  }, [active, camera, controls, width, height]);
+  }, [active, camera, controls, width, height, isMobile]);
 
   return null;
 }
 
-function Scene({ active, interactive, hour, appearance, selectedId, travel, onSelectBuilding, onArrive }: {
+function Scene({ active, interactive, hour, appearance, selectedId, travel, isMobile, onSelectBuilding, onArrive }: {
   active: boolean;
   interactive: boolean;
   hour: number;
   appearance: CharacterAppearance;
   selectedId: string | null;
   travel: Travel | null;
+  isMobile: boolean;
   onSelectBuilding: (building: Building) => void;
   onArrive: (token: number) => void;
+  
 }) {
   const destination = useMemo<Point>(() => {
     const building = travel ? PLACED_BUILDINGS.find((entry) => entry.id === travel.buildingId) : undefined;
@@ -2302,7 +2307,7 @@ function Scene({ active, interactive, hour, appearance, selectedId, travel, onSe
           TWO: THREE.TOUCH.DOLLY_PAN // Two fingers zoom
         }}
       />
-      <FitMapCamera active={active && interactive} />
+      <FitMapCamera active={active && interactive} isMobile={isMobile} />
 
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -48, 0]}>
         <planeGeometry args={[10000, 10000]} /><meshStandardMaterial map={oceanTexture} color="#d2e3e3" roughness={0.42} metalness={0.12} />
@@ -2423,6 +2428,14 @@ export default function OsogboScene({
   const [travel, setTravel] = useState<Travel | null>(null);
   const tokenRef = useRef(0);
 
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+
   const devOffsetMs = useGameStore((state) => state.devOffsetMs);
   const cash = useGameStore((state) => state.cash);
   const spendCash = useGameStore((state) => state.spendCash);
@@ -2496,7 +2509,13 @@ export default function OsogboScene({
           shadows
           style={{ width: "100%", height: "100%" }}
           dpr={[1, 1.5]}
-          camera={{ position: [0, 2450, 2350], rotation: [-Math.PI / 4, 0, 0], fov: 45, near: 1, far: 12000 }}
+          camera={{ 
+            position: [0, 2450, 2350], 
+            rotation: [-Math.PI / 4, 0, 0], 
+            fov: 45, 
+            near: 1, 
+            far: 12000 
+          }}
           gl={{ antialias: true, alpha: false }}
           onCreated={({ gl }) => {
             gl.setClearColor("#4babc0");
@@ -2511,6 +2530,7 @@ export default function OsogboScene({
             appearance={appearance}
             selectedId={sheetBuilding?.id ?? null}
             travel={travel}
+            isMobile={isMobile}
             onSelectBuilding={setSheetBuilding}
             onArrive={handleArrive}
           />

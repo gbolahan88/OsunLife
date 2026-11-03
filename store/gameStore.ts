@@ -22,7 +22,7 @@ const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const MAX_CATCH_UP_MINUTES = 8 * 60;
 // Only a display cache now. The real starting balance is set in the database.
-const STARTING_CASH = 10000000;
+const STARTING_CASH = 100000;
 
 export type CharacterAppearance = {
   skin: string; hair: string; shirt: string; trousers: string;
@@ -72,14 +72,14 @@ export const FURNITURE_INTERACTIONS: Record<string, FurnitureInteraction[]> = {
     { label: "Clean toilet", emoji: "🧽", need: "hygiene", amount: 20 },
   ],
   "bath-rain-shower": [
-    { label: "Take shower", emoji: "🚿", need: "hygiene", amount: 90 },
+    { label: "Take shower", emoji: "🚿", need: "hygiene", amount: 80 },
   ],
   "bath-bathtub": [
     { label: "Take a bath", emoji: "🛀", need: "hygiene", amount: 100 },
   ],
   "bath-jacuzzi": [
     { label: "Relax in jacuzzi", emoji: "💦", need: "fun", amount: 70 },
-    { label: "Wash up", emoji: "🫧", need: "hygiene", amount: 60 },
+    { label: "Wash up", emoji: "🫧", need: "hygiene", amount: 90 },
   ],
   "bath-baby-bath": [
     { label: "Wash up", emoji: "🛁", need: "hygiene", amount: 30 },
@@ -104,6 +104,7 @@ export const FURNITURE_INTERACTIONS: Record<string, FurnitureInteraction[]> = {
   // Kitchen
   "gas-cooker": [
     { label: "Cook food", emoji: "🍳", need: "food", amount: 70 },
+    { label: "Cook Rice", emoji: "🍳", need: "food", amount: 50 },
   ],
   "refrigerator": [
     { label: "Eat a snack", emoji: "🥪", need: "food", amount: 25 },

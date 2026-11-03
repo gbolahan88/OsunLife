@@ -52,7 +52,7 @@ Sources for the reference notes: your screenshots, plus public fan guides (lagos
 | Afrika Shrine, Quilox | Local live-music spot, owambe venue (our own names) |
 | Amala Shitta | Amala joint in Ede, ikokore in Ilesa |
 | Freedom Park, museum | Ife Museum, Ooni's palace area, Oranmiyan Staff |
-| Danfo | Okada and keke |
+| Korope | Okada and keke |
 | Governor election | Ataoja or town-chief style council (design later) |
 
 Place names above are candidates. We will confirm each one before it goes in the game.
