@@ -141,11 +141,11 @@ export function validateFurniturePlacement(
   }
 
   const size = furnitureGridFootprint(room, item, position.rotation);
-  
-  // ✅ REMOVED: The `position.col + size.w > cols` check.
-  // This allows the furniture to cross room boundaries (into the kitchen).
+  const { cols, rows } = roomTiles(room);
+  if (position.col + size.w > cols || position.row + size.d > rows) {
+    return { ok: false, reason: "Furniture cannot extend outside the room." };
+  }
 
-  // ✅ Only check furniture overlap (no wall checks)
   const candidate = { col: position.col, row: position.row, ...size };
   for (const existing of placed) {
     if (existing.uid === ignoreUid || existing.roomId !== position.roomId) continue;

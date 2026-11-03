@@ -10,9 +10,7 @@ export type RoomPose = { x: number; z: number; ry: number; action: RoomAction };
 export type RemotePose = RoomPose & { at: number };
 
 /** Something a player did in the room. Amounts are never sent: the receiver looks them up. */
-export type RoomEvent =
-  | { t: "buy"; u: string; a: string }
-  | { t: "react"; u: string; r: string };
+export type RoomEvent = { t: "react"; u: string; r: string };
 
 const ACTIONS: RoomAction[] = ["idle", "walk", "sit", "dance"];
 const LIMIT_X = 12;
@@ -95,9 +93,7 @@ export function useRoomSync(
         if (now - (lastEventAt.get(p.u) ?? 0) < EVENT_MIN_GAP_MS) return;
         lastEventAt.set(p.u, now);
 
-        if (p.t === "buy" && typeof p.a === "string" && ID_PATTERN.test(p.a)) {
-          onEventRef.current?.({ t: "buy", u: p.u, a: p.a });
-        } else if (p.t === "react" && typeof p.r === "string" && ID_PATTERN.test(p.r)) {
+        if (p.t === "react" && typeof p.r === "string" && ID_PATTERN.test(p.r)) {
           onEventRef.current?.({ t: "react", u: p.u, r: p.r });
         }
       },

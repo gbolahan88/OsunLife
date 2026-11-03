@@ -13,10 +13,15 @@ import {
   type FurniturePosition, type PlacedFurniture, type Rotation,
 } from "@/lib/furniture";
 import { MAP_TASKS, MAP_TASK_COOLDOWN_MS } from "@/lib/mapTasks";
+import {
+  claimTask, walletGet, walletRefundFurniture, walletSpend, walletTakeLoan,
+  type SpendReason,
+} from "@/lib/wallet";
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const MAX_CATCH_UP_MINUTES = 8 * 60;
+// Only a display cache now. The real starting balance is set in the database.
 const STARTING_CASH = 10000000;
 
 export type CharacterAppearance = {
@@ -29,16 +34,28 @@ export const DEFAULT_CHARACTER_APPEARANCE: CharacterAppearance = {
   trousers: "#252f45", hairstyle: "short",
 };
 
+const WALLET_DEFAULTS = {
+  walletReady: false,
+  walletVersion: 0,
+  walletNotice: null as string | null,
+};
+
 function createInitialSave(lastTick = 0) {
   return {
     lastTick, cash: STARTING_CASH, needs: { ...INITIAL_NEEDS },
     housing: "undecided" as HousingStatus, loan: 0, loanTaken: false,
     furniture: [] as PlacedFurniture[], completedMapTasks: {} as Record<string, number>,
     devOffsetMs: 0, characterAppearance: { ...DEFAULT_CHARACTER_APPEARANCE },
+    ...WALLET_DEFAULTS,
   };
 }
 
 export type ActionResult = { ok: true } | { ok: false; reason: string };
+
+const WALLET_NOT_READY: ActionResult = {
+  ok: false,
+  reason: "Syncing your wallet. Try again in a moment.",
+};
 
 // ✅ Furniture → which needs it can fill and by how much per use
 export type FurnitureInteraction = {
@@ -127,10 +144,19 @@ type GameState = {
   loan: number; loanTaken: boolean; furniture: PlacedFurniture[];
   completedMapTasks: Record<string, number>; devOffsetMs: number;
   characterAppearance: CharacterAppearance;
+
+  // Wallet mirror (the server is the real balance)
+  walletReady: boolean;
+  walletVersion: number;
+  walletNotice: string | null;
+  applyServerBalance: (balance: number, version: number) => void;
+  syncWallet: () => Promise<void>;
+
   updateCharacterAppearance: (appearance: Partial<CharacterAppearance>) => void;
   tick: (now: number) => void;
+  /** Kept so old callers still compile. It no longer gives money: only the server does. */
   addCash: (amount: number) => void;
-  spendCash: (amount: number) => boolean;
+  spendCash: (amount: number, reason?: SpendReason) => boolean;
   changeNeeds: (delta: Partial<Needs>) => void;
   rentHome: (planId: HousingPlanId, takeLoan: boolean) => ActionResult;
   sleepRough: () => void;
@@ -138,7 +164,7 @@ type GameState = {
   sellFurniture: (uid: string) => ActionResult;
   moveFurniture: (uid: string, position: FurniturePosition) => ActionResult;
   rotateFurniture: (uid: string) => ActionResult;
-  useFurniture: (uid: string, need: NeedKey, amount: number) => ActionResult; // ✅ NEW
+  useFurniture: (uid: string, need: NeedKey, amount: number) => ActionResult;
   completeMapTask: (taskId: string, completedAt?: number) => ActionResult;
   repayLoan: () => number;
   devShiftHours: (hours: number) => void;
@@ -147,180 +173,277 @@ type GameState = {
 
 export const useGameStore = create<GameState>()(
   persist(
-    (set, get) => ({
-      ...createInitialSave(),
+    (set, get) => {
+      // The server said no: show why and pull the real balance back
+      const refused = (reason: string) => {
+        set({ walletNotice: reason });
+        void get().syncWallet();
+      };
 
-      updateCharacterAppearance: (appearance) =>
-        set((state) => ({ characterAppearance: { ...state.characterAppearance, ...appearance } })),
+      return {
+        ...createInitialSave(),
 
-      tick: (now) =>
-        set((state) => {
-          if (now < state.lastTick) return { lastTick: now };
-          const elapsedMinutes = Math.floor((now - state.lastTick) / MINUTE_MS);
-          if (elapsedMinutes < 1) return state;
-          const minutesToApply = Math.min(elapsedMinutes, MAX_CATCH_UP_MINUTES);
-          const needs: Needs = { ...state.needs };
-          for (let i = 0; i < minutesToApply; i++) {
-            const clock = getGameClock(state.lastTick + i * MINUTE_MS);
-            const isNight = getDayPhase(clock.hour) === "night";
-            for (const key of NEED_KEYS) {
-              let drainPerMinute = NEED_META[key].drainPerHour / 60;
-              if (key === "energy" && isNight) drainPerMinute *= NIGHT_ENERGY_MULTIPLIER;
-              needs[key] = clamp(needs[key] - drainPerMinute);
+        applyServerBalance: (balance, version) =>
+          set((state) =>
+            version >= state.walletVersion
+              ? { cash: balance, walletVersion: version, walletReady: true }
+              : state
+          ),
+
+        syncWallet: async () => {
+          const res = await walletGet();
+          if (res.ok) get().applyServerBalance(res.balance, res.version);
+        },
+
+        updateCharacterAppearance: (appearance) =>
+          set((state) => ({ characterAppearance: { ...state.characterAppearance, ...appearance } })),
+
+        tick: (now) =>
+          set((state) => {
+            if (now < state.lastTick) return { lastTick: now };
+            const elapsedMinutes = Math.floor((now - state.lastTick) / MINUTE_MS);
+            if (elapsedMinutes < 1) return state;
+            const minutesToApply = Math.min(elapsedMinutes, MAX_CATCH_UP_MINUTES);
+            const needs: Needs = { ...state.needs };
+            for (let i = 0; i < minutesToApply; i++) {
+              const clock = getGameClock(state.lastTick + i * MINUTE_MS);
+              const isNight = getDayPhase(clock.hour) === "night";
+              for (const key of NEED_KEYS) {
+                let drainPerMinute = NEED_META[key].drainPerHour / 60;
+                if (key === "energy" && isNight) drainPerMinute *= NIGHT_ENERGY_MULTIPLIER;
+                needs[key] = clamp(needs[key] - drainPerMinute);
+              }
             }
-          }
-          return { needs, lastTick: state.lastTick + elapsedMinutes * MINUTE_MS };
-        }),
+            return { needs, lastTick: state.lastTick + elapsedMinutes * MINUTE_MS };
+          }),
 
-      addCash: (amount) => set((state) => ({ cash: state.cash + amount })),
+        addCash: () => {
+          void get().syncWallet();
+        },
 
-      spendCash: (amount) => {
-        if (get().cash < amount) return false;
-        set((state) => ({ cash: state.cash - amount }));
-        return true;
-      },
+        spendCash: (amount, reason = "travel") => {
+          const state = get();
+          if (!state.walletReady || amount <= 0 || state.cash < amount) return false;
+          set({ cash: state.cash - amount });
+          void walletSpend(amount, reason).then((res) => {
+            if (res.ok) get().applyServerBalance(res.balance, res.version);
+            else refused(res.reason);
+          });
+          return true;
+        },
 
-      changeNeeds: (delta) =>
-        set((state) => {
+        changeNeeds: (delta) =>
+          set((state) => {
+            const needs: Needs = { ...state.needs };
+            for (const key of NEED_KEYS) {
+              const change = delta[key];
+              if (change !== undefined) needs[key] = clamp(needs[key] + change);
+            }
+            return { needs };
+          }),
+
+        rentHome: (planId, takeLoan) => {
+          const state = get();
+          if (!state.walletReady) return WALLET_NOT_READY;
+          if (isHousingPlanId(state.housing)) return { ok: false, reason: "You already have a home." };
+          const plan = getHousingPlan(planId);
+          const useLoan = takeLoan && !state.loanTaken;
+          const available = state.cash + (useLoan ? LOAN_OFFER : 0);
+          if (available < plan.price) return { ok: false, reason: "You can't afford this place yet." };
+
+          const before = {
+            housing: state.housing, furniture: state.furniture,
+            loan: state.loan, loanTaken: state.loanTaken,
+          };
+          set({
+            cash: available - plan.price,
+            loan: state.loan + (useLoan ? LOAN_OFFER : 0),
+            loanTaken: state.loanTaken || useLoan,
+            housing: planId, furniture: [],
+          });
+
+          void (async () => {
+            if (useLoan) {
+              const loan = await walletTakeLoan(LOAN_OFFER);
+              if (!loan.ok) {
+                set(before);
+                refused(loan.reason);
+                return;
+              }
+            }
+            const paid = await walletSpend(plan.price, "rent", planId);
+            if (paid.ok) {
+              get().applyServerBalance(paid.balance, paid.version);
+            } else {
+              set(before);
+              refused(paid.reason);
+            }
+          })();
+          return { ok: true };
+        },
+
+        sleepRough: () => set({ housing: "homeless", furniture: [] }),
+
+        buyFurniture: (itemId) => {
+          const state = get();
+          if (!state.walletReady) return WALLET_NOT_READY;
+          const item = FURNITURE_BY_ID[itemId];
+          if (!item) return { ok: false, reason: "That item isn't available." };
+          if (!isHousingPlanId(state.housing)) return { ok: false, reason: "You need a home first." };
+          if (state.cash < item.price) return { ok: false, reason: "Not enough cash." };
+
+          const layout = getApartmentLayout(state.housing);
+          const spot = findSpot(layout, state.furniture, item);
+          if (!spot) return { ok: false, reason: "No free tiles for this in your home." };
+
+          const uid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+          set({ cash: state.cash - item.price, furniture: [...state.furniture, { uid, itemId, ...spot }] });
+
+          void walletSpend(item.price, "furniture", uid).then((res) => {
+            if (res.ok) {
+              get().applyServerBalance(res.balance, res.version);
+            } else {
+              set((s) => ({ furniture: s.furniture.filter((f) => f.uid !== uid) }));
+              refused(res.reason);
+            }
+          });
+          return { ok: true };
+        },
+
+        sellFurniture: (uid) => {
+          const state = get();
+          if (!state.walletReady) return WALLET_NOT_READY;
+          const item = state.furniture.find((f) => f.uid === uid);
+          if (!item) return { ok: false, reason: "Furniture not found." };
+          const catalogItem = FURNITURE_BY_ID[item.itemId];
+          if (!catalogItem) return { ok: false, reason: "Unknown furniture." };
+          const refund = Math.floor(catalogItem.price * 0.9);
+          set({ cash: state.cash + refund, furniture: state.furniture.filter((f) => f.uid !== uid) });
+
+          void walletRefundFurniture(catalogItem.price).then((res) => {
+            if (res.ok) {
+              get().applyServerBalance(res.balance, res.version);
+            } else {
+              // The server won't pay for it, so keep the furniture
+              set((s) => ({ furniture: [...s.furniture, item] }));
+              refused(res.reason);
+            }
+          });
+          return { ok: true };
+        },
+
+        moveFurniture: (uid, position) => {
+          const state = get();
+          if (!isHousingPlanId(state.housing)) return { ok: false, reason: "You need a home first." };
+          const existing = state.furniture.find((entry) => entry.uid === uid);
+          if (!existing) return { ok: false, reason: "Furniture not found." };
+          const item = FURNITURE_BY_ID[existing.itemId];
+          if (!item) return { ok: false, reason: "Furniture definition not found." };
+
+          const layout = getApartmentLayout(state.housing);
+          const result = validateFurniturePlacement(layout, state.furniture, item, position, uid);
+          if (!result.ok) return { ok: false, reason: result.reason ?? "Invalid furniture position." };
+
+          set({
+            furniture: state.furniture.map((entry) =>
+              entry.uid === uid ? { ...entry, ...position } : entry
+            ),
+          });
+          return { ok: true };
+        },
+
+        rotateFurniture: (uid) => {
+          const state = get();
+          if (!isHousingPlanId(state.housing)) return { ok: false, reason: "You need a home first." };
+          const existing = state.furniture.find((entry) => entry.uid === uid);
+          if (!existing) return { ok: false, reason: "Furniture not found." };
+          const item = FURNITURE_BY_ID[existing.itemId];
+          if (!item) return { ok: false, reason: "Furniture definition not found." };
+
+          const nextRotation = ((existing.rotation + 1) % 4) as Rotation;
+          const layout = getApartmentLayout(state.housing);
+          const position: FurniturePosition = {
+            roomId: existing.roomId, col: existing.col, row: existing.row,
+            rotation: nextRotation,
+          };
+
+          const result = validateFurniturePlacement(layout, state.furniture, item, position, uid);
+          if (!result.ok) return { ok: false, reason: result.reason ?? "Furniture cannot rotate here." };
+
+          set({
+            furniture: state.furniture.map((entry) =>
+              entry.uid === uid ? { ...entry, rotation: nextRotation } : entry
+            ),
+          });
+          return { ok: true };
+        },
+
+        // Use furniture to fill a need
+        useFurniture: (uid, need, amount) => {
+          const state = get();
+          const existing = state.furniture.find((entry) => entry.uid === uid);
+          if (!existing) return { ok: false, reason: "Furniture not found." };
+          const current = state.needs[need] ?? 0;
+          if (current >= 100) return { ok: false, reason: "That need is already full." };
+
           const needs: Needs = { ...state.needs };
-          for (const key of NEED_KEYS) {
-            const change = delta[key];
-            if (change !== undefined) needs[key] = clamp(needs[key] + change);
-          }
-          return { needs };
-        }),
+          needs[need] = clamp(current + amount);
 
-      rentHome: (planId, takeLoan) => {
-        const state = get();
-        if (isHousingPlanId(state.housing)) return { ok: false, reason: "You already have a home." };
-        const plan = getHousingPlan(planId);
-        const useLoan = takeLoan && !state.loanTaken;
-        const available = state.cash + (useLoan ? LOAN_OFFER : 0);
-        if (available < plan.price) return { ok: false, reason: "You can't afford this place yet." };
-        set({
-          cash: available - plan.price,
-          loan: state.loan + (useLoan ? LOAN_OFFER : 0),
-          loanTaken: state.loanTaken || useLoan,
-          housing: planId, furniture: [],
-        });
-        return { ok: true };
-      },
+          set({ needs });
+          return { ok: true };
+        },
 
-      sleepRough: () => set({ housing: "homeless", furniture: [] }),
+        completeMapTask: (taskId, completedAt = Date.now()) => {
+          const task = MAP_TASKS.find((entry) => entry.id === taskId);
+          if (!task) return { ok: false, reason: "That task isn't available." };
+          const state = get();
+          if (!state.walletReady) return WALLET_NOT_READY;
+          const availableAt = (state.completedMapTasks[taskId] ?? 0) + MAP_TASK_COOLDOWN_MS;
+          if (availableAt > completedAt) return { ok: false, reason: "This task will be available again tomorrow." };
 
-      buyFurniture: (itemId) => {
-        const state = get();
-        const item = FURNITURE_BY_ID[itemId];
-        if (!item) return { ok: false, reason: "That item isn't available." };
-        if (!isHousingPlanId(state.housing)) return { ok: false, reason: "You need a home first." };
-        if (state.cash < item.price) return { ok: false, reason: "Not enough cash." };
+          set({
+            cash: state.cash + task.reward,
+            completedMapTasks: { ...state.completedMapTasks, [taskId]: completedAt },
+          });
 
-        const layout = getApartmentLayout(state.housing);
-        const spot = findSpot(layout, state.furniture, item);
-        if (!spot) return { ok: false, reason: "No free tiles for this in your home." };
+          // The server holds the reward and the cooldown
+          void claimTask(taskId).then((res) => {
+            if (res.ok) get().applyServerBalance(res.balance, res.version);
+            else refused(res.reason);
+          });
+          return { ok: true };
+        },
 
-        const uid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-        set({ cash: state.cash - item.price, furniture: [...state.furniture, { uid, itemId, ...spot }] });
-        return { ok: true };
-      },
+        repayLoan: () => {
+          const { cash, loan, walletReady } = get();
+          if (!walletReady) return 0;
+          const amount = Math.min(cash, loan);
+          if (amount <= 0) return 0;
+          set({ cash: cash - amount, loan: loan - amount });
 
-      sellFurniture: (uid) => {
-        const state = get();
-        const item = state.furniture.find((f) => f.uid === uid);
-        if (!item) return { ok: false, reason: "Furniture not found." };
-        const catalogItem = FURNITURE_BY_ID[item.itemId];
-        if (!catalogItem) return { ok: false, reason: "Unknown furniture." };
-        const refund = Math.floor(catalogItem.price * 0.9);
-        set({ cash: state.cash + refund, furniture: state.furniture.filter((f) => f.uid !== uid) });
-        return { ok: true };
-      },
+          void walletSpend(amount, "loan_repay").then((res) => {
+            if (res.ok) {
+              get().applyServerBalance(res.balance, res.version);
+            } else {
+              set((s) => ({ loan: s.loan + amount }));
+              refused(res.reason);
+            }
+          });
+          return amount;
+        },
 
-      moveFurniture: (uid, position) => {
-        const state = get();
-        if (!isHousingPlanId(state.housing)) return { ok: false, reason: "You need a home first." };
-        const existing = state.furniture.find((entry) => entry.uid === uid);
-        if (!existing) return { ok: false, reason: "Furniture not found." };
-        const item = FURNITURE_BY_ID[existing.itemId];
-        if (!item) return { ok: false, reason: "Furniture definition not found." };
+        devShiftHours: (hours) => set((state) => ({ devOffsetMs: state.devOffsetMs + hours * HOUR_MS })),
 
-        const layout = getApartmentLayout(state.housing);
-        const result = validateFurniturePlacement(layout, state.furniture, item, position, uid);
-        if (!result.ok) return { ok: false, reason: result.reason ?? "Invalid furniture position." };
-
-        set({
-          furniture: state.furniture.map((entry) =>
-            entry.uid === uid ? { ...entry, ...position } : entry
-          ),
-        });
-        return { ok: true };
-      },
-
-      rotateFurniture: (uid) => {
-        const state = get();
-        if (!isHousingPlanId(state.housing)) return { ok: false, reason: "You need a home first." };
-        const existing = state.furniture.find((entry) => entry.uid === uid);
-        if (!existing) return { ok: false, reason: "Furniture not found." };
-        const item = FURNITURE_BY_ID[existing.itemId];
-        if (!item) return { ok: false, reason: "Furniture definition not found." };
-
-        const nextRotation = ((existing.rotation + 1) % 4) as Rotation;
-        const layout = getApartmentLayout(state.housing);
-        const position: FurniturePosition = {
-          roomId: existing.roomId, col: existing.col, row: existing.row,
-          rotation: nextRotation,
-        };
-
-        const result = validateFurniturePlacement(layout, state.furniture, item, position, uid);
-        if (!result.ok) return { ok: false, reason: result.reason ?? "Furniture cannot rotate here." };
-
-        set({
-          furniture: state.furniture.map((entry) =>
-            entry.uid === uid ? { ...entry, rotation: nextRotation } : entry
-          ),
-        });
-        return { ok: true };
-      },
-
-      // ✅ NEW: use furniture to fill a need
-      useFurniture: (uid, need, amount) => {
-        const state = get();
-        const existing = state.furniture.find((entry) => entry.uid === uid);
-        if (!existing) return { ok: false, reason: "Furniture not found." };
-        const current = state.needs[need] ?? 0;
-        if (current >= 100) return { ok: false, reason: "That need is already full." };
-
-        const needs: Needs = { ...state.needs };
-        needs[need] = clamp(current + amount);
-
-        set({ needs });
-        return { ok: true };
-      },
-
-      completeMapTask: (taskId, completedAt = Date.now()) => {
-        const task = MAP_TASKS.find((entry) => entry.id === taskId);
-        if (!task) return { ok: false, reason: "That task isn't available." };
-        const state = get();
-        const availableAt = (state.completedMapTasks[taskId] ?? 0) + MAP_TASK_COOLDOWN_MS;
-        if (availableAt > completedAt) return { ok: false, reason: "This task will be available again tomorrow." };
-        set({
-          cash: state.cash + task.reward,
-          completedMapTasks: { ...state.completedMapTasks, [taskId]: completedAt },
-        });
-        return { ok: true };
-      },
-
-      repayLoan: () => {
-        const { cash, loan } = get();
-        const amount = Math.min(cash, loan);
-        if (amount <= 0) return 0;
-        set({ cash: cash - amount, loan: loan - amount });
-        return amount;
-      },
-
-      devShiftHours: (hours) => set((state) => ({ devOffsetMs: state.devOffsetMs + hours * HOUR_MS })),
-
-      reset: () => set({ ...createInitialSave(Date.now()) }),
-    }),
+        reset: () =>
+          set((state) => ({
+            ...createInitialSave(Date.now()),
+            // Your money is not part of a local reset
+            cash: state.cash,
+            walletReady: state.walletReady,
+            walletVersion: state.walletVersion,
+          })),
+      };
+    },
     {
       name: "osun-life-save-v2",
       version: 3,
@@ -331,6 +454,8 @@ export const useGameStore = create<GameState>()(
           ...currentState,
           ...createInitialSave(Date.now()),
           ...persisted,
+          // Always ask the server for the balance after loading a save
+          ...WALLET_DEFAULTS,
           characterAppearance: { ...DEFAULT_CHARACTER_APPEARANCE, ...(persisted?.characterAppearance ?? {}) },
         };
       },

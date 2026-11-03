@@ -26,7 +26,7 @@ type VenuePanelProps = {
   dancing: boolean;
   onToggleDance: () => void;
   onReact: (reactionId: string) => void;
-  onBuy: (action: VenueAction) => BuyResult;
+  onBuy: (action: VenueAction) => BuyResult | Promise<BuyResult>;
   onWalkToSpot: (spot: VenueSpot) => void;
   onChat: (player: RemotePlayer) => void;
 };
@@ -60,6 +60,7 @@ export default function VenuePanel({
   const [group, setGroup] = useState<VenueGroup>(() => groups[0] ?? "Drinks");
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const spots = VENUE_SPOTS[venueId] ?? [];
   const visible = actions.filter((a) => a.group === group);
 
@@ -71,13 +72,16 @@ export default function VenuePanel({
 
   const label = (action: VenueAction) => action.label.replace("{venue}", venueName);
 
-  function handleBuy(action: VenueAction) {
+  async function handleBuy(action: VenueAction) {
+    if (busy) return;
     if (action.price >= CONFIRM_FROM && confirmId !== action.id) {
       setConfirmId(action.id);
       return;
     }
     setConfirmId(null);
-    const result = onBuy(action);
+    setBusy(true);
+    const result = await onBuy(action);
+    setBusy(false);
     setNotice(result.ok ? `${action.emoji} ${label(action)}: done` : result.reason);
   }
 
@@ -208,7 +212,7 @@ export default function VenuePanel({
                 <button
                   key={action.id}
                   type="button"
-                  disabled={!affordable}
+                  disabled={!affordable || busy}
                   onClick={() => handleBuy(action)}
                   className={`flex items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition-colors ${
                     confirming

@@ -47,7 +47,16 @@ import {
   type VenueSpot,
 } from "@/lib/venue";
 import { MAP_TASKS } from "@/lib/mapTasks";
+import { MoneyDropsLayer, useMoneyDrops } from "@/components/game/MoneyDrops";
+import {
+  useVenueRealtime,
+  type MoneyDropRow,
+  type VenueEventRow,
+} from "@/components/multiplayer/useVenueRealtime";
+import { venueBuy } from "@/lib/wallet";
 
+
+type BuyResult = { ok: true } | { ok: false; reason: string };
 type FixtureKind =
   | "desk" | "chair" | "bed" | "medical-bed" | "shelf" | "counter"
   | "plant" | "table" | "sofa" | "throne" | "stall" | "clothing-rack"
@@ -1078,19 +1087,14 @@ export default function BuildingInterior({
 }) {
   const config = INTERIORS[buildingId] ?? DEFAULT_INTERIOR;
   const venue = isVenue(buildingId);
-  const hasMapTask = MAP_TASKS.some((task) => task.targetBuildingId === buildingId);
   const { userId, username, players, openThread } = useMultiplayer();
   const here = useMemo(
     () => players.filter((player) => player.place === buildingId),
     [players, buildingId]
   );
-  const hereRef = useRef(here);
-  useEffect(() => {
-    hereRef.current = here;
-  }, [here]);
 
   const cash = useGameStore((state) => state.cash);
-  const spendCash = useGameStore((state) => state.spendCash);
+  const applyServerBalance = useGameStore((state) => state.applyServerBalance);
 
   const [dancing, setDancing] = useState(false);
   const [sitting, setSitting] = useState(false);
@@ -1102,6 +1106,8 @@ export default function BuildingInterior({
 
   const fx = useVenueFx(buildingName);
   const pushFx = fx.push;
+  const drops = useMoneyDrops();
+  const { add: addDrop, remove: removeDrop } = drops;
 
   useEffect(() => {
     const timers = bubbleTimers.current;
@@ -1126,26 +1132,27 @@ export default function BuildingInterior({
     );
   }, []);
 
-  // Something another player did in this room
+  // Reactions are free and only cosmetic, so they travel over the room channel
   const handleRoomEvent = useCallback(
     (event: RoomEvent) => {
-      // Only react to people we can see are in this building
-      const name = hereRef.current.find((player) => player.userId === event.u)?.username;
-      if (!name) return;
-
-      if (event.t === "react") {
-        const reaction = REACTIONS.find((item) => item.id === event.r);
-        if (reaction) showBubble(event.u, reaction.emoji);
-        return;
-      }
-
-      const action = findAction(event.a, buildingId);
-      if (action) pushFx(action, name);
+      const reaction = REACTIONS.find((item) => item.id === event.r);
+      if (reaction) showBubble(event.u, reaction.emoji);
     },
-    [buildingId, pushFx, showBubble],
+    [showBubble],
   );
 
   const { remote, sendEvent } = useRoomSync(buildingId, userId, localRef, handleRoomEvent);
+
+  // Purchases and sprayed notes come from the database, so nobody can fake them
+  useVenueRealtime(venue ? buildingId : null, {
+    onEvent: (row: VenueEventRow) => {
+      if (row.user_id === userId) return; // you already saw your own
+      const action = findAction(row.action_id, buildingId);
+      if (action) pushFx(action, row.username);
+    },
+    onDrop: (row: MoneyDropRow) => addDrop(row, row.sprayer_id === userId),
+    onDropClaimed: (id: string) => removeDrop(id),
+  });
 
   const handleFloorTap = useCallback((x: number, z: number) => {
     targetRef.current = { x, z };
@@ -1153,14 +1160,27 @@ export default function BuildingInterior({
     setSitting(false);
   }, []);
 
+  const handleSeatAt = useCallback((pos: [number, number], action: "sit" | "idle") => {
+    targetRef.current = { x: pos[0], z: pos[1] };
+    setDancing(false);
+    setSitting(action === "sit");
+  }, []);
+
   const handleBuy = useCallback(
-    (action: VenueAction): { ok: true } | { ok: false; reason: string } => {
-      if (!spendCash(action.price)) return { ok: false, reason: "Not enough cash." };
+    async (action: VenueAction): Promise<BuyResult> => {
+      const result = await venueBuy(buildingId, action.id);
+      if (!result.ok) return { ok: false, reason: result.reason };
+
+      applyServerBalance(result.balance, result.version);
       pushFx(action, username || "You");
-      sendEvent({ t: "buy", u: userId, a: action.id });
+
+      // Notes nobody picks up come back to you after about 30 seconds
+      if (action.kind === "spray") {
+        window.setTimeout(() => void useGameStore.getState().syncWallet(), 32_000);
+      }
       return { ok: true };
     },
-    [pushFx, sendEvent, spendCash, userId, username],
+    [applyServerBalance, buildingId, pushFx, username],
   );
 
   const handleReact = useCallback(
@@ -1176,13 +1196,7 @@ export default function BuildingInterior({
   const handleSpot = useCallback((spot: VenueSpot) => {
     targetRef.current = { x: spot.x, z: spot.z };
     setDancing(false);
-    setSitting(spot.id === "lounge");
-  }, []);
-
-    const handleSeatAt = useCallback((pos: [number, number], action: "sit" | "idle") => {
-    targetRef.current = { x: pos[0], z: pos[1] };
-    setSitting(action === "sit");
-    setDancing(false);
+    setSitting(false);
   }, []);
 
   function chatWith(player: RemotePlayer) {
@@ -1214,6 +1228,7 @@ export default function BuildingInterior({
     </Canvas>
 
     {venue && <VenueFxLayer fx={fx} />}
+    {venue && <MoneyDropsLayer drops={drops} />}
 
     <div className="pointer-events-none absolute inset-0">
       <div className="pointer-events-auto absolute left-3 top-[calc(env(safe-area-inset-top)+7rem)] flex max-w-[calc(100%-1.5rem)] items-center gap-2 sm:left-4">
@@ -1235,22 +1250,32 @@ export default function BuildingInterior({
           cash={cash}
           here={here}
           dancing={dancing}
-          onToggleDance={() => {
-            setSitting(false);
-            setDancing((current) => !current);
-          }}
+          onToggleDance={() => setDancing((current) => !current)}
           onReact={handleReact}
           onBuy={handleBuy}
           onWalkToSpot={handleSpot}
           onChat={chatWith}
         />
-      ) : !hasMapTask ? (
-        <div className="pointer-events-none absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6.5rem)] flex flex-col items-center gap-2 px-3">
+      ) : (
+        <div className="pointer-events-none absolute inset-x-0 bottom-44 flex flex-col items-center gap-2 px-3">
           <p className="rounded-full bg-black/45 px-3 py-1 text-[10px] font-semibold text-white backdrop-blur">
             Tap the floor to walk
           </p>
+          <button
+            type="button"
+            onClick={() => setDancing((current) => !current)}
+            aria-pressed={dancing}
+            className={`pointer-events-auto flex h-11 items-center gap-2 rounded-full border px-5 text-[13px] font-extrabold shadow-lg backdrop-blur transition-colors ${
+              dancing
+                ? "border-[#f04f9b] bg-[#f04f9b] text-white"
+                : "border-white/80 bg-white/95 text-[#263d31]"
+            }`}
+          >
+            <span aria-hidden>💃</span>
+            {dancing ? "Stop dancing" : "Dance"}
+          </button>
         </div>
-      ) : null}
+      )}
     </div>
   </div>;
 }

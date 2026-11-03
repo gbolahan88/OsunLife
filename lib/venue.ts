@@ -33,11 +33,11 @@ export const CONFIRM_FROM = 1_000_000;
 export const VENUE_ACTIONS: VenueAction[] = [
   // ── Money ──
   { id: "spray-5k", emoji: "💵", label: "Spray ₦5,000", price: 5_000, kind: "spray", group: "Money",
-    announce: "{name} sprayed ₦5,000 on the dance floor 💵", fx: { emoji: ["💵"], count: 12 }, venues: CLUB },
+    announce: "{name} sprayed ₦5,000 on the dance floor 💵", fx: { emoji: [], count: 0 }, venues: CLUB },
   { id: "spray-100k", emoji: "💸", label: "Spray ₦100,000", price: 100_000, kind: "spray", group: "Money",
-    announce: "{name} is spraying ₦100,000 💸", fx: { emoji: ["💵", "💸"], count: 26 }, venues: CLUB },
+    announce: "{name} is spraying ₦100,000 💸", fx: { emoji: [], count: 0 }, venues: CLUB },
   { id: "spray-1m", emoji: "🤑", label: "Make it rain ₦1,000,000", price: 1_000_000, kind: "spray", group: "Money",
-    announce: "{name} made it rain ₦1,000,000 🤑", fx: { emoji: ["💵", "💸", "🤑"], count: 50 }, venues: CLUB },
+    announce: "{name} made it rain ₦1,000,000 🤑", fx: { emoji: [], count: 0 }, venues: CLUB },
 
   // ── Hype ──
   { id: "hype-man", emoji: "🎤", label: "Pay the Hype Man", price: 20_000, kind: "hype", group: "Hype",

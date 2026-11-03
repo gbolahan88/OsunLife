@@ -1,4 +1,4 @@
-
+// components/multiplayer/MultiplayerProvider.tsx
 "use client";
 
 import {
@@ -11,11 +11,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type {
-  RealtimeChannel,
-  RealtimePostgresChangesPayload,
-} from "@supabase/supabase-js";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { getBrowserClient } from "@/lib/supabase-browser";
+import { sendMoney as sendMoneyRpc } from "@/lib/wallet";
+import { useGameStore } from "@/store/gameStore";
 import {
   CharacterAppearance,
   DEFAULT_CHARACTER_APPEARANCE,
@@ -40,6 +39,9 @@ export type ChatMessage = {
   senderUsername: string;
   recipientUsername: string;
   body: string;
+  /** "money" messages are created by the server when a transfer happens */
+  kind: "text" | "money";
+  amount: number | null;
   createdAt: string;
   readAt: string | null;
 };
@@ -59,6 +61,12 @@ type PresencePayload = {
   place: string;
 };
 
+type PresenceMeta = {
+  username?: unknown;
+  appearance?: unknown;
+  place?: unknown;
+};
+
 type MessageRow = {
   id: string;
   sender_id: string;
@@ -66,6 +74,8 @@ type MessageRow = {
   sender_username: string;
   recipient_username: string;
   body: string;
+  kind?: string;
+  amount?: number | null;
   created_at: string;
   read_at: string | null;
 };
@@ -83,9 +93,8 @@ type MultiplayerValue = {
   activeThread: ThreadTarget | null;
   openThread: (target: ThreadTarget | null) => void;
   sendMessage: (to: ThreadTarget, body: string) => Promise<SendResult>;
+  sendMoney: (to: ThreadTarget, amount: number) => Promise<SendResult>;
   markRead: (otherUserId: string) => Promise<void>;
-  /** The live Supabase channel for broadcasting club events */
-  channel: RealtimeChannel | null;
 };
 
 /* ───────────────────────────── helpers ───────────────────────────── */
@@ -94,25 +103,21 @@ const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 const USERNAME_PATTERN = /^[a-z0-9_]{3,20}$/;
 
 function cleanUsername(value: unknown): string {
-  return typeof value === "string" && USERNAME_PATTERN.test(value)
-    ? value
-    : "Player";
+  return typeof value === "string" && USERNAME_PATTERN.test(value) ? value : "Player";
 }
 
 /** Other players send their look over the network, so never trust it. */
 function sanitizeAppearance(raw: unknown): CharacterAppearance {
   const a = (raw ?? {}) as Record<string, unknown>;
   const fallback = DEFAULT_CHARACTER_APPEARANCE;
-
   const color = (value: unknown, def: string) =>
     typeof value === "string" && COLOR_PATTERN.test(value) ? value : def;
 
   return {
     ...fallback,
-    gender:
-      a.gender === "Man" || a.gender === "Woman"
-        ? a.gender
-        : fallback.gender,
+    gender: (a.gender === "Man" || a.gender === "Woman"
+      ? a.gender
+      : fallback.gender) as CharacterAppearance["gender"],
     skin: color(a.skin, fallback.skin),
     hair: color(a.hair, fallback.hair),
     shirt: color(a.shirt, fallback.shirt),
@@ -128,37 +133,23 @@ function toMessage(row: MessageRow): ChatMessage {
     senderUsername: row.sender_username,
     recipientUsername: row.recipient_username,
     body: row.body,
+    kind: row.kind === "money" ? "money" : "text",
+    amount: typeof row.amount === "number" ? row.amount : null,
     createdAt: row.created_at,
     readAt: row.read_at,
   };
 }
 
-function mergeMessages(
-  current: ChatMessage[],
-  incoming: ChatMessage[],
-): ChatMessage[] {
+function mergeMessages(current: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
   const byId = new Map<string, ChatMessage>();
-
   for (const message of current) byId.set(message.id, message);
-
-  for (const message of incoming) {
-    byId.set(message.id, {
-      ...byId.get(message.id),
-      ...message,
-    });
-  }
-
-  return [...byId.values()].sort((a, b) =>
-    a.createdAt.localeCompare(b.createdAt),
-  );
+  for (const message of incoming) byId.set(message.id, { ...byId.get(message.id), ...message });
+  return [...byId.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 /* ───────────────────────────── context ───────────────────────────── */
 
-const noopSend = async (): Promise<SendResult> => ({
-  ok: false,
-  reason: "Chat is not available.",
-});
+const noopSend = async (): Promise<SendResult> => ({ ok: false, reason: "Chat is not available." });
 
 const defaultValue: MultiplayerValue = {
   userId: "",
@@ -171,8 +162,8 @@ const defaultValue: MultiplayerValue = {
   activeThread: null,
   openThread: () => {},
   sendMessage: noopSend,
+  sendMoney: noopSend,
   markRead: async () => {},
-  channel: null,
 };
 
 const MultiplayerContext = createContext<MultiplayerValue>(defaultValue);
@@ -212,15 +203,12 @@ export function MultiplayerProvider({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeThread, setActiveThread] = useState<ThreadTarget | null>(null);
 
-  // Store channel in state so we can pass it via context safely.
-  const [channel, setChannel] = useState<RealtimeChannel | null>(null);
-
   const payload = useMemo<PresencePayload>(
     () => ({ username, appearance, place }),
     [username, appearance, place],
   );
-
   const payloadRef = useRef(payload);
+  const channelRef = useRef<RealtimeChannel | null>(null);
   const subscribedRef = useRef(false);
   const messagesRef = useRef<ChatMessage[]>([]);
   const onIncomingRef = useRef(onIncomingMessage);
@@ -235,68 +223,48 @@ export function MultiplayerProvider({
 
   /* ── Presence: who is online, and where ── */
   useEffect(() => {
-    const worldChannel = supabase.channel("osun-life:world", {
+    const channel = supabase.channel("osun-life:world", {
       config: { presence: { key: userId } },
     });
-
-    // Update state so it is available to consumers.
-    setTimeout(() => setChannel(worldChannel), 0);
+    channelRef.current = channel;
 
     const sync = () => {
-      // Explicitly type the presence state instead of passing an
-      // unsupported generic to presenceState().
-      const state = worldChannel.presenceState() as Record<
-        string,
-        PresencePayload[]
-      >;
-
+      const state = channel.presenceState() as Record<string, PresenceMeta[]>;
       const next: RemotePlayer[] = [];
-
       for (const [key, metas] of Object.entries(state)) {
         if (key === userId) continue;
-
-        const meta = metas[metas.length - 1];
+        const meta = metas[metas.length - 1] as PresenceMeta | undefined;
         if (!meta) continue;
-
         next.push({
           userId: key,
           username: cleanUsername(meta.username),
           appearance: sanitizeAppearance(meta.appearance),
-          place:
-            typeof meta.place === "string"
-              ? meta.place.slice(0, 40)
-              : "private",
+          place: typeof meta.place === "string" ? meta.place.slice(0, 40) : "private",
         });
       }
-
       setPlayers(next);
       setOnlineCount(Math.max(1, Object.keys(state).length));
     };
 
-    worldChannel
-      .on("presence", { event: "sync" }, sync)
-      .subscribe((status: string) => {
-        if (status === "SUBSCRIBED") {
-          subscribedRef.current = true;
-          void worldChannel.track(payloadRef.current);
-        }
-      });
+    channel.on("presence", { event: "sync" }, sync).subscribe((status: string) => {
+      if (status === "SUBSCRIBED") {
+        subscribedRef.current = true;
+        void channel.track(payloadRef.current);
+      }
+    });
 
     return () => {
       subscribedRef.current = false;
-      setChannel(null);
-      void supabase.removeChannel(worldChannel);
+      channelRef.current = null;
+      void supabase.removeChannel(channel);
     };
   }, [supabase, userId]);
 
-  // Tell everyone when you move to another place or change your look.
+  // Tell everyone when you move to another place or change your look
   useEffect(() => {
     payloadRef.current = payload;
-
-    if (subscribedRef.current && channel) {
-      void channel.track(payload);
-    }
-  }, [payload, channel]);
+    if (subscribedRef.current) void channelRef.current?.track(payload);
+  }, [payload]);
 
   /* ── Chat: history + live incoming messages ── */
   useEffect(() => {
@@ -308,37 +276,21 @@ export function MultiplayerProvider({
         .select("*")
         .order("created_at", { ascending: false })
         .limit(200);
-
       if (cancelled || error || !data) return;
-
-      setMessages((current) =>
-        mergeMessages(current, (data as MessageRow[]).map(toMessage)),
-      );
+      setMessages((current) => mergeMessages(current, (data as MessageRow[]).map(toMessage)));
     })();
 
     const inbox = supabase
       .channel(`osun-life:inbox:${userId}`)
       .on(
         "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-          filter: `recipient_id=eq.${userId}`,
-        },
-        (change: RealtimePostgresChangesPayload<MessageRow>) => {
-          const row = change.new as MessageRow | undefined;
-
-          if (!row || !row.id) return;
-
+        { event: "INSERT", schema: "public", table: "messages", filter: `recipient_id=eq.${userId}` },
+        (change: { new?: MessageRow | null }) => {
+          const row = change.new;
+          if (!row) return;
           const message = toMessage(row);
-
           setMessages((current) => mergeMessages(current, [message]));
-
-          onIncomingRef.current?.(
-            message.senderUsername,
-            message.body,
-          );
+          onIncomingRef.current?.(message.senderUsername, message.body);
         },
       )
       .subscribe();
@@ -352,60 +304,52 @@ export function MultiplayerProvider({
   const sendMessage = useCallback(
     async (to: ThreadTarget, body: string): Promise<SendResult> => {
       const text = body.trim().slice(0, 500);
-
-      if (!text) {
-        return { ok: false, reason: "Type a message first." };
-      }
+      if (!text) return { ok: false, reason: "Type a message first." };
 
       const { data, error } = await supabase
         .from("messages")
-        .insert({
-          sender_id: userId,
-          recipient_id: to.userId,
-          body: text,
-        })
+        .insert({ sender_id: userId, recipient_id: to.userId, body: text })
         .select("*")
         .single();
 
-      if (error || !data) {
-        return {
-          ok: false,
-          reason: "Could not send. Try again.",
-        };
-      }
-
-      setMessages((current) =>
-        mergeMessages(current, [toMessage(data as MessageRow)]),
-      );
-
+      if (error || !data) return { ok: false, reason: "Could not send. Try again." };
+      setMessages((current) => mergeMessages(current, [toMessage(data as MessageRow)]));
       return { ok: true };
     },
     [supabase, userId],
   );
 
+  // The server moves the money and creates the chat card, so it can't be faked
+  const sendMoney = useCallback(
+    async (to: ThreadTarget, amount: number): Promise<SendResult> => {
+      const result = await sendMoneyRpc(to.userId, amount);
+      if (!result.ok) return { ok: false, reason: result.reason };
+
+      useGameStore.getState().applyServerBalance(result.balance, result.version);
+      const row = result.message as MessageRow | null;
+      if (row && typeof row.id === "string") {
+        setMessages((current) => mergeMessages(current, [toMessage(row)]));
+      }
+      return { ok: true };
+    },
+    [],
+  );
+
   const markRead = useCallback(
     async (otherUserId: string) => {
       const hasUnread = messagesRef.current.some(
-        (m) =>
-          m.senderId === otherUserId &&
-          m.recipientId === userId &&
-          !m.readAt,
+        (m) => m.senderId === otherUserId && m.recipientId === userId && !m.readAt,
       );
-
       if (!hasUnread) return;
 
       const now = new Date().toISOString();
-
       setMessages((current) =>
         current.map((m) =>
-          m.senderId === otherUserId &&
-          m.recipientId === userId &&
-          !m.readAt
+          m.senderId === otherUserId && m.recipientId === userId && !m.readAt
             ? { ...m, readAt: now }
             : m,
         ),
       );
-
       await supabase
         .from("messages")
         .update({ read_at: now })
@@ -418,42 +362,24 @@ export function MultiplayerProvider({
 
   const conversations = useMemo<Conversation[]>(() => {
     const byPlayer = new Map<string, Conversation>();
-
     for (const message of messages) {
       const mine = message.senderId === userId;
       const otherId = mine ? message.recipientId : message.senderId;
-
-      const otherName = mine
-        ? message.recipientUsername
-        : message.senderUsername;
-
+      const otherName = mine ? message.recipientUsername : message.senderUsername;
       const unread = !mine && !message.readAt ? 1 : 0;
       const entry = byPlayer.get(otherId);
-
       if (!entry) {
-        byPlayer.set(otherId, {
-          userId: otherId,
-          username: otherName,
-          last: message,
-          unread,
-        });
+        byPlayer.set(otherId, { userId: otherId, username: otherName, last: message, unread });
       } else {
         entry.last = message;
         entry.unread += unread;
       }
     }
-
-    return [...byPlayer.values()].sort((a, b) =>
-      b.last.createdAt.localeCompare(a.last.createdAt),
-    );
+    return [...byPlayer.values()].sort((a, b) => b.last.createdAt.localeCompare(a.last.createdAt));
   }, [messages, userId]);
 
   const unreadTotal = useMemo(
-    () =>
-      conversations.reduce(
-        (total, conversation) => total + conversation.unread,
-        0,
-      ),
+    () => conversations.reduce((total, conversation) => total + conversation.unread, 0),
     [conversations],
   );
 
@@ -469,27 +395,11 @@ export function MultiplayerProvider({
       activeThread,
       openThread: setActiveThread,
       sendMessage,
+      sendMoney,
       markRead,
-      channel,
     }),
-    [
-      userId,
-      username,
-      players,
-      onlineCount,
-      messages,
-      conversations,
-      unreadTotal,
-      activeThread,
-      sendMessage,
-      markRead,
-      channel,
-    ],
+    [userId, username, players, onlineCount, messages, conversations, unreadTotal, activeThread, sendMessage, sendMoney, markRead],
   );
 
-  return (
-    <MultiplayerContext.Provider value={value}>
-      {children}
-    </MultiplayerContext.Provider>
-  );
+  return <MultiplayerContext.Provider value={value}>{children}</MultiplayerContext.Provider>;
 }

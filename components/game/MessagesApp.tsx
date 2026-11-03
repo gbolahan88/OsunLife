@@ -3,10 +3,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Send } from "lucide-react";
+import { formatNaira } from "@/lib/format";
+import { useGameStore } from "@/store/gameStore";
 import {
   useMultiplayer,
+  type ChatMessage,
   type ThreadTarget,
 } from "@/components/multiplayer/MultiplayerProvider";
+
+const QUICK_AMOUNTS = [1_000, 5_000, 20_000, 100_000, 500_000];
 
 const AVATAR_COLORS = ["#d65b3f", "#2876b9", "#4b925c", "#a64b70", "#e0ad38", "#7955e8", "#16a085"];
 
@@ -34,6 +39,10 @@ function timeLabel(iso: string) {
   return sameDay
     ? date.toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit" })
     : date.toLocaleDateString("en-NG", { day: "numeric", month: "short" });
+}
+
+function previewOf(message: ChatMessage) {
+  return message.kind === "money" ? `💸 ${formatNaira(message.amount ?? 0)}` : message.body;
 }
 
 export function MessagesApp() {
@@ -98,7 +107,7 @@ function ConversationList() {
                   <span
                     className={`block truncate text-xs ${conversation.unread ? "font-bold text-[#263d31]" : "text-[#728274]"}`}
                   >
-                    {conversation.last.body}
+                    {previewOf(conversation.last)}
                   </span>
                 </span>
                 {conversation.unread > 0 && (
@@ -116,10 +125,14 @@ function ConversationList() {
 }
 
 function Thread({ target }: { target: ThreadTarget }) {
-  const { userId, messages, players, sendMessage, markRead } = useMultiplayer();
+  const { userId, messages, players, sendMessage, sendMoney, markRead } = useMultiplayer();
+  const cash = useGameStore((state) => state.cash);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [moneyOpen, setMoneyOpen] = useState(false);
+  const [amountText, setAmountText] = useState("");
+  const [sendingMoney, setSendingMoney] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const thread = useMemo(
@@ -133,13 +146,16 @@ function Thread({ target }: { target: ThreadTarget }) {
   );
   const online = players.some((player) => player.userId === target.userId);
 
+  const amount = Number.parseInt(amountText.replace(/[^0-9]/g, ""), 10);
+  const validAmount = Number.isFinite(amount) && amount >= 1 && amount <= cash;
+
   useEffect(() => {
     void markRead(target.userId);
   }, [target.userId, thread.length, markRead]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [thread.length]);
+  }, [thread.length, moneyOpen]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -150,6 +166,20 @@ function Thread({ target }: { target: ThreadTarget }) {
     setSending(false);
     if (result.ok) setText("");
     else setError(result.reason);
+  }
+
+  async function submitMoney() {
+    if (!validAmount || sendingMoney) return;
+    setSendingMoney(true);
+    setError(null);
+    const result = await sendMoney(target, amount);
+    setSendingMoney(false);
+    if (result.ok) {
+      setAmountText("");
+      setMoneyOpen(false);
+    } else {
+      setError(result.reason);
+    }
   }
 
   return (
@@ -167,6 +197,21 @@ function Thread({ target }: { target: ThreadTarget }) {
         )}
         {thread.map((message) => {
           const mine = message.senderId === userId;
+
+          if (message.kind === "money") {
+            return (
+              <div key={message.id} className="flex justify-center">
+                <div className="rounded-2xl border border-[#bfe8cf] bg-[#e9f8ef] px-4 py-2 text-center shadow-sm">
+                  <p className="text-[12px] font-extrabold text-[#1d6b45]">
+                    💸 {mine ? `You sent ${target.username}` : `${target.username} sent you`}{" "}
+                    {formatNaira(message.amount ?? 0)}
+                  </p>
+                  <p className="text-[9px] font-medium text-[#4a8a68]">{timeLabel(message.createdAt)}</p>
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div key={message.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
               <div
@@ -187,7 +232,61 @@ function Thread({ target }: { target: ThreadTarget }) {
 
       {error && <p className="mt-2 text-[11px] font-semibold text-[#b44235]">{error}</p>}
 
+      {moneyOpen && (
+        <div className="mt-2 rounded-2xl bg-white p-3 shadow-sm">
+          <p className="text-[11px] font-bold text-[#728274]">
+            Send money to {target.username} · You have {formatNaira(cash)}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {QUICK_AMOUNTS.map((quick) => (
+              <button
+                key={quick}
+                type="button"
+                disabled={quick > cash}
+                onClick={() => setAmountText(String(quick))}
+                className={`rounded-full px-3 py-1.5 text-[11px] font-bold ${
+                  amount === quick ? "bg-[#20b978] text-white" : "bg-[#eef3eb] text-[#355846]"
+                } ${quick > cash ? "opacity-40" : ""}`}
+              >
+                {formatNaira(quick)}
+              </button>
+            ))}
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              value={amountText}
+              onChange={(event) => setAmountText(event.target.value)}
+              inputMode="numeric"
+              placeholder="Other amount"
+              className="h-10 min-w-0 flex-1 rounded-full border border-[#d5ded4] bg-white px-4 text-[13px] text-[#263d31] outline-none focus:border-[#20b978]"
+            />
+            <button
+              type="button"
+              onClick={() => void submitMoney()}
+              disabled={!validAmount || sendingMoney}
+              className="h-10 shrink-0 rounded-full bg-[#17a05d] px-4 text-[12px] font-extrabold text-white disabled:opacity-50"
+            >
+              {validAmount ? `Send ${formatNaira(amount)}` : "Send"}
+            </button>
+          </div>
+          {Number.isFinite(amount) && amount > cash && (
+            <p className="mt-1 text-[11px] font-semibold text-[#b44235]">You don&apos;t have that much.</p>
+          )}
+        </div>
+      )}
+
       <form onSubmit={submit} className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setMoneyOpen((open) => !open)}
+          aria-label="Send money"
+          aria-pressed={moneyOpen}
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[15px] font-black ${
+            moneyOpen ? "bg-[#17a05d] text-white" : "bg-white text-[#17a05d] shadow-sm"
+          }`}
+        >
+          ₦
+        </button>
         <input
           value={text}
           onChange={(event) => setText(event.target.value)}

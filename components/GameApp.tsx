@@ -25,6 +25,8 @@ import {
   CharacterAppearance,
   DEFAULT_CHARACTER_APPEARANCE,
 } from "@/store/characterAppearance";
+import WalletSync from "@/components/multiplayer/WalletSync";
+
 
 const APPEARANCE_KEY_PREFIX = "osun-life:appearance";
 
@@ -53,8 +55,9 @@ export default function GameApp({
   supabaseKey: string;
 }) {
   const [tab, setTab] = useState<Tab>("map");
+  const [lastNonBuyTab, setLastNonBuyTab] = useState<Tab>("map");
   const [phoneOpen, setPhoneOpen] = useState(false);
-  const [lastBuilding, setLastBuilding] = useState("Tobi's House");
+  const [lastBuilding, setLastBuilding] = useState("Home");
   const [lastBuildingId, setLastBuildingId] = useState("home");
   const [loadedUsername, setLoadedUsername] = useState<string | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -153,10 +156,12 @@ export default function GameApp({
     setPhoneOpen(false);
 
     if (newTab === "buy") {
-      if (tab === "home") return;
+      setLastNonBuyTab(tab);
       setTab("buy");
       return;
     }
+
+    setLastNonBuyTab(newTab);
     setTab(newTab);
   }
 
@@ -191,6 +196,7 @@ export default function GameApp({
       place={place}
       onIncomingMessage={handleIncomingMessage}
     >
+      <WalletSync onNotice={setTaskNotice} />
       <div className="flex h-dvh w-full flex-col">
         <div className="relative h-full overflow-hidden bg-[var(--bg)]">
           <DayNightOverlay phase={phase} />
@@ -238,7 +244,7 @@ export default function GameApp({
               onBuy={buyFurniture}
               onSell={sellFurniture}
               onFindHome={() => setIsRentOpen(true)}
-              onClose={() => setTab("map")}
+              onClose={() => setTab(lastNonBuyTab)}
             />
           )}
 
