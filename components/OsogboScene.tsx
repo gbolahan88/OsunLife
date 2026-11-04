@@ -2,12 +2,14 @@
 
 import { Html, OrbitControls, MapControls } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore, type MutableRefObject } from "react";
 import * as THREE from "three";
 import type { Group, InstancedMesh } from "three";
 import { getGameClock } from "@/lib/time";
 import { useNow } from "@/hooks/useNow";
 import { useGameStore } from "@/store/gameStore";
+import { RideVehicle, type RideMode } from "@/components/game/RideVehicles";
+import RideBar from "@/components/RideBar";
 import {
   CharacterAppearance,
   DEFAULT_CHARACTER_APPEARANCE,
@@ -15,8 +17,16 @@ import {
 } from "@/store/characterAppearance";
 import CharacterModel from "@/components/game/CharacterModel";
 import BuildingSheet from "@/components/BuildingSheet";
+import BillboardAdDialog from "@/components/BillboardAdDialog";
 import { TRANSPORT_MODES, type TransportId } from "@/lib/buildingInfo";
 import { MAP_TASKS, MAP_TASK_COOLDOWN_MS } from "@/lib/mapTasks";
+import {
+  BILLBOARD_PRICES,
+  isBillboardId,
+  type BillboardAd,
+  type BillboardId,
+} from "@/lib/billboard-ads";
+import { formatNaira } from "@/lib/format";
 
 
 type Point = { x: number; y: number };
@@ -35,6 +45,7 @@ type Building = {
   kind?: "market" | "tower" | "stadium" | "lounge" | "openbar" | "flyover";
 };
 type BillboardData = {
+  id: BillboardId;
   x: number;
   y: number;
   width: number;
@@ -213,7 +224,7 @@ const HOME_PLOTS: Home[] = Array.from({ length: 144 }, (_, index) => ({
   clearsGrove(home.x, home.y, 108, 42)));
 
 const BUILDINGS: Building[] = [
-  { id: "uniosun", name: "UNIOSUN Osogbo Campus", x: 220, y: 150, width: 120, depth: 92, height: 52, roof: "#a64b42", wall: "#d6c79e", icon: "🎓" },
+  { id: "uniosun", name: "UNIOSUN Osogbo Campus", x: 250, y: 170, width: 160, depth: 92, height: 52, roof: "#a64b42", wall: "#d6c79e", icon: "🎓" },
   { id: "stadium", name: "Osogbo City Stadium", x: 960, y: 50, width: 280, depth: 280, height: 28, roof: "#47704c", wall: "#d4c69b", icon: "🏟️", kind: "stadium" },
   { id: "home", name: "Home", x: 1560, y: 140, width: 145, depth: 88, height: 58, roof: "#934c38", wall: "#d9bd91", icon: "🏠" },
   { id: "hospital", name: "City Hospital", x: 2150, y: 140, width: 140, depth: 110, height: 66, roof: "#7b4038", wall: "#e0d6b8", icon: "🏥" },
@@ -221,7 +232,10 @@ const BUILDINGS: Building[] = [
   { id: "market", name: "Oja Oba Market", x: 860, y: 680, width: 300, depth: 165, height: 76, roof: "#875a34", wall: "#d5b477", icon: "🧺", kind: "market" },
   { id: "adire-tower", name: "Nike's Gallery", x: 0, y: 700, width: 115, depth: 90, height: 145, roof: "#30485c", wall: "#72a2a7", icon: "🏙️", kind: "tower" },
   { id: "civic-tower", name: "Osun Civic Tower", x: 1560, y: 880, width: 118, depth: 96, height: 160, roof: "#596b79", wall: "#8bb7b5", icon: "🏢", kind: "tower" },
-  { id: "bank-tower", name: "Oroki Heights", x: 2110, y: 790, width: 118, depth: 92, height: 132, roof: "#48515f", wall: "#94b2ad", icon: "🏬", kind: "tower" },
+  { id: "bank", name: "Osun Community Bank", x: 2065, y: 800, width: 118, depth: 92, height: 122, roof: "#48515f", wall: "#94b2ad", icon: "🏦", kind: "tower" },
+  { id: "state-cid", name: "State CID Police Station", x: 1790, y: 800, width: 104, depth: 92, height: 62, roof: "#344b67", wall: "#d0d5d4", icon: "🚔" },
+  { id: "federal-high-court", name: "Federal High Court", x: 1400, y: 1500, width: 104, depth: 92, height: 66, roof: "#82704f", wall: "#e0d4b8", icon: "⚖️" },
+  { id: "church", name: "Osogbo Community Church", x: 600, y: 1530, width: 115, depth: 92, height: 76, roof: "#9b5442", wall: "#e3d9c4", icon: "⛪" },
   { id: "grove-gate", name: "Osun Grove", x: 370, y: 1000, width: 110, depth: 78, height: 48, roof: "#47704c", wall: "#d4c69b", icon: "🌳" },
   { id: "bus-stop", name: "Osogbo central mosque", x: 160, y: 1160, width: 105, depth: 72, height: 40, roof: "#526a6d", wall: "#ded1ae", icon: "🛺" },
   { id: "shop1", name: "Local Shop", x: 1010, y: 1000, width: 125, depth: 90, height: 49, roof: "#4d6c70", wall: "#d4c59b", icon: "🛍️" },
@@ -237,13 +251,26 @@ const BUILDINGS: Building[] = [
 ];
 
 const BILLBOARDS: BillboardData[] = [
-  { x: 300, y: 505, width: 250, title: "NIKE'S GALLERY", subtitle: "CRAFTED IN OSOGBO", color: "#28776e" },
-  { x: 680, y: 50, width: 280, title: "OJA OBA", subtitle: "MARKET DAY", color: "#bc6345" },
-  { x: 1210, y: 500, width: 270, title: "OSUN", subtitle: "HERITAGE WEEK", color: "#d89b3c" },
-  { x: 1720, y: 500, width: 265, title: "OROKI", subtitle: "MADE IN OSOGBO", color: "#346f77" },
-  { x: 2110, y: 505, width: 245, title: "CITY LIFE", subtitle: "FIND YOUR PLACE", color: "#9b5442" },
-  { x: 400, y: 1270, width: 150, title: "Ads", subtitle: "FIND YOUR LiFE", color: "#9b5442" },
+  { id: "billboard-1", x: 300, y: 505, width: 250, title: "NIKE'S GALLERY", subtitle: "CRAFTED IN OSOGBO", color: "#28776e" },
+  { id: "billboard-2", x: 680, y: 50, width: 280, title: "OJA OBA", subtitle: "MARKET DAY", color: "#bc6345" },
+  { id: "billboard-3", x: 1210, y: 500, width: 270, title: "OSUN", subtitle: "HERITAGE WEEK", color: "#d89b3c" },
+  { id: "billboard-4", x: 1720, y: 500, width: 265, title: "OROKI", subtitle: "MADE IN OSOGBO", color: "#346f77" },
+  { id: "billboard-5", x: 2110, y: 505, width: 245, title: "CITY LIFE", subtitle: "FIND YOUR PLACE", color: "#9b5442" },
+  { id: "billboard-6", x: 400, y: 1270, width: 150, title: "Ads", subtitle: "FIND YOUR LiFE", color: "#9b5442" },
 ];
+
+function getBillboardPaymentStatus() {
+  return new URLSearchParams(window.location.search).get("billboardPayment");
+}
+
+function getBillboardPaymentReference() {
+  return new URLSearchParams(window.location.search).get("billboardPaymentReference");
+}
+
+function subscribeToBillboardPaymentStatus(callback: () => void) {
+  window.addEventListener("popstate", callback);
+  return () => window.removeEventListener("popstate", callback);
+}
 
 const HOME_BUILDING = BUILDINGS.find((building) => building.id === "home")!;
 
@@ -1269,20 +1296,132 @@ function RiverBridge({ position, rotation }: {
   );
 }
 
-function Billboard({ board }: { board: BillboardData }) {
+function Billboard({
+  board,
+  ads,
+  onSelect,
+}: {
+  board: BillboardData;
+  ads: BillboardAd[];
+  onSelect: (board: BillboardData) => void;
+}) {
+  const boardAds = ads.filter((ad) => ad.boardId === board.id);
+  const [adIndex, setAdIndex] = useState(0);
+  useEffect(() => {
+    if (boardAds.length < 2) return;
+    const timer = window.setInterval(() => {
+      setAdIndex((index) => (index + 1) % boardAds.length);
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [boardAds.length, board.id]);
+  const activeAd = boardAds[adIndex % Math.max(boardAds.length, 1)];
   const [x, , z] = worldPosition(board.x + board.width / 2, board.y + 50);
   return (
     <group position={[x, 0, z]} rotation={[0, -0.16, 0]}>
       {[-0.3, 0.3].map((ratio) => <mesh key={ratio} position={[board.width * ratio, 42, 0]} castShadow><boxGeometry args={[6, 84, 6]} /><meshStandardMaterial color="#303a3a" /></mesh>)}
       <mesh position={[0, 96, 0]} castShadow><boxGeometry args={[board.width, 104, 9]} /><meshStandardMaterial color="#202c2d" /></mesh>
-      <mesh position={[0, 97, 5]}><boxGeometry args={[board.width - 14, 88, 2]} /><meshStandardMaterial color={board.color} roughness={0.64} /></mesh>
-      <Html transform position={[0, 97, 6.5]} center zIndexRange={[100, 0]}>
-        <div style={{ width: `${board.width - 26}px`, height: "78px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", overflow: "hidden", textAlign: "center", color: "white", textShadow: "0 2px 3px rgba(0,0,0,.45)", fontFamily: "Arial, sans-serif", whiteSpace: "nowrap" }}>
-          <div style={{ fontSize: board.title.length > 8 ? "24px" : "32px", fontWeight: 900, letterSpacing: "0.08em", lineHeight: 1.1, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>{board.title}</div>
-          <div style={{ marginTop: "8px", fontSize: "12px", fontWeight: 800, letterSpacing: "0.1em", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>{board.subtitle}</div>
-        </div>
+      <mesh position={[0, 97, 5]}><boxGeometry args={[board.width - 14, 88, 2]} /><meshStandardMaterial color={activeAd ? "#111" : board.color} roughness={0.64} /></mesh>
+      <Html transform position={[0, 96, 6.5]} center zIndexRange={[100, 0]} pointerEvents="auto">
+        <button
+          type="button"
+          aria-label={`Post an ad on billboard ${board.id.replace("billboard-", "")}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelect(board);
+          }}
+          style={{
+            position: "relative",
+            display: "flex",
+            width: `${board.width}px`,
+            height: "104px",
+            alignItems: "center",
+            justifyContent: "center",
+            overflow: "hidden",
+            border: 0,
+            padding: 0,
+            background: activeAd ? "#111" : board.color,
+            color: "white",
+            cursor: "pointer",
+            fontFamily: "Arial, sans-serif",
+            textAlign: "center",
+            textShadow: "0 2px 3px rgba(0,0,0,.45)",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {activeAd?.adType === "video" ? (
+            <video
+              key={activeAd.id}
+              src={activeAd.mediaUrl}
+              autoPlay
+              muted
+              loop
+              playsInline
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            />
+          ) : activeAd ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img key={activeAd.id} src={activeAd.mediaUrl} alt="Paid billboard advertisement" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          ) : (
+            <span style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", padding: "6px 8px", boxSizing: "border-box" }}>
+              <span style={{
+                display: "block",
+                fontSize: `${Math.min(board.width, 104) * 0.22}px`,
+                fontWeight: 900,
+                letterSpacing: "0.06em",
+                lineHeight: 1.05,
+                maxWidth: "100%",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}>{board.title}</span>
+              <span style={{
+                display: "block",
+                marginTop: "4px",
+                fontSize: `${Math.min(board.width, 104) * 0.12}px`,
+                fontWeight: 800,
+                letterSpacing: "0.08em",
+                lineHeight: 1.1,
+                maxWidth: "100%",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}>{board.subtitle}</span>
+            </span>
+          )}
+          <span style={{ position: "absolute", bottom: "3px", left: "50%", transform: "translateX(-50%)", borderRadius: "999px", background: "rgba(10,18,20,.78)", padding: "2px 7px", fontSize: "50px", fontWeight: 800, letterSpacing: ".03em", textShadow: "none" }}>
+            {board.width < 220
+              ? "Tap to advertise"
+              : `Tap to advertise · ${formatNaira(BILLBOARD_PRICES.image)} image / ${formatNaira(BILLBOARD_PRICES.video)} video`}
+          </span>
+        </button>
       </Html>
     </group>
+  );
+}
+
+function BillboardDialogController({
+  openRef,
+}: {
+  openRef: MutableRefObject<(board: BillboardData) => void>;
+}) {
+  const [selectedBoard, setSelectedBoard] = useState<BillboardData | null>(null);
+  const open = useCallback((board: BillboardData) => setSelectedBoard(board), []);
+
+  useLayoutEffect(() => {
+    openRef.current = open;
+    return () => {
+      if (openRef.current === open) openRef.current = () => {};
+    };
+  }, [open, openRef]);
+
+  if (!selectedBoard) return null;
+
+  return (
+    <BillboardAdDialog
+      boardName={selectedBoard.title}
+      boardId={selectedBoard.id}
+      onClose={() => setSelectedBoard(null)}
+    />
   );
 }
 
@@ -1951,32 +2090,48 @@ function buildingPoint(building: Building): Point {
 
 const HOME_POINT = buildingPoint(HOME_BUILDING);
 
+function lerpAngleTo(from: number, to: number, amount: number) {
+  let diff = (to - from) % (Math.PI * 2);
+  if (diff > Math.PI) diff -= Math.PI * 2;
+  if (diff < -Math.PI) diff += Math.PI * 2;
+  return from + diff * amount;
+}
+
 type Travel = {
   token: number;
   buildingId: string;
+  mode: TransportId;
   speed: number;
   onFoot: boolean;
 };
 
+/** How far the camera sits from the vehicle while you ride. */
+const RIDE_DISTANCE = 480;
+/** Vehicles float this high so their wheels sit on the road. */
+const RIDE_BASE_Y = 2.5;
+
 function AnimatedPlayer({
   destination,
   appearance,
-  speed,
-  onFoot,
-  travelToken,
+  travel,
+  progressRef,
+  playerPos,
   onArrive,
 }: {
   destination: Point;
   appearance: CharacterAppearance;
-  speed: number;
-  onFoot: boolean;
-  travelToken: number | null;
+  travel: Travel | null;
+  progressRef: MutableRefObject<number>;
+  playerPos: MutableRefObject<THREE.Vector3>;
   onArrive: (token: number) => void;
 }) {
   const playerRef = useRef<Group>(null);
   const step = useRef(0);
   const pendingToken = useRef<number | null>(null);
   const movingRef = useRef(false);
+  const startDistance = useRef(1);
+  const tripTime = useRef(0);
+  const spin = useRef(0);
   const [moving, setMoving] = useState(false);
   // Start where the player begins; later moves are animated, never teleported
   const [startPosition] = useState(() => worldPosition(destination.x, destination.y));
@@ -1985,9 +2140,22 @@ function AnimatedPlayer({
     [destination]
   );
 
+  const onFoot = travel?.onFoot ?? true;
+  const speed = travel?.speed ?? 120;
+  const rideMode: RideMode | null = travel && travel.mode !== "trek" ? travel.mode : null;
+
   useEffect(() => {
-    pendingToken.current = travelToken;
-  }, [travelToken]);
+    pendingToken.current = travel?.token ?? null;
+    tripTime.current = 0;
+    spin.current = 0;
+    progressRef.current = 0;
+    const player = playerRef.current;
+    if (player) {
+      const dx = target.x - player.position.x;
+      const dz = target.z - player.position.z;
+      startDistance.current =Math.max (1, Math.hypot(dx, dz));
+    }
+  }, [travel, target, progressRef]);
 
   useFrame((_, delta) => {
     const player = playerRef.current;
@@ -1998,14 +2166,23 @@ function AnimatedPlayer({
     const distance = Math.hypot(dx, dz);
 
     if (distance > 3) {
+      tripTime.current += delta;
+       const easeIn = onFoot ? 1 : Math.min(1, 0.25 + tripTime.current * 1.2);
+      const easeOut = onFoot ? 1 : Math.min(1, 0.3 + distance / 160);
       // Constant speed toward the destination
-      const stepLength = Math.min(distance, speed * delta);
+      const stepLength = Math.min(distance, speed * easeIn * easeOut * delta);
+      
       player.position.x += (dx / distance) * stepLength;
       player.position.z += (dz / distance) * stepLength;
-      player.rotation.y = Math.atan2(dx, dz);
+      spin.current += stepLength;
+      const yaw = Math.atan2(dx, dz);
+      player.rotation.y = onFoot ? yaw : lerpAngleTo(player.rotation.y, yaw, Math.min(1, delta * 8));
 
       step.current += delta * (onFoot ? 10 : 16);
-      player.position.y = Math.abs(Math.sin(step.current)) * (onFoot ? 1.2 : 0.6);
+      const bob = Math.abs(Math.sin(step.current)) * (onFoot ? 1.2 : 0.5);
+      player.position.y = (onFoot ? 0 : RIDE_BASE_Y) + bob;
+
+      progressRef.current = Math.min(1, Math.max(0, 1 - distance / startDistance.current));
 
       if (!movingRef.current) {
         movingRef.current = true;
@@ -2014,7 +2191,7 @@ function AnimatedPlayer({
     } else {
       player.position.x = target.x;
       player.position.z = target.z;
-      player.position.y = 0;
+      player.position.y = onFoot ? 0 : RIDE_BASE_Y;
 
       if (movingRef.current) {
         movingRef.current = false;
@@ -2025,25 +2202,84 @@ function AnimatedPlayer({
       if (pendingToken.current !== null) {
         const token = pendingToken.current;
         pendingToken.current = null;
+        progressRef.current = 1;
         onArrive(token);
       }
     }
+    playerPos.current.copy(player.position);
   });
 
   return (
     <group ref={playerRef} position={startPosition}>
-      <CharacterModel
-        key={`map-player-${appearance.skin}-${appearance.hairstyle}-${appearance.shirt}`}
-        appearance={appearance}
-        targetHeight={30}
-        action={moving && onFoot ? "walk" : "idle"}
-      />
+      {rideMode ? (
+        <RideVehicle mode={rideMode} appearance={appearance} spin={spin} />
+      ) : (
+        <CharacterModel
+          key={`map-player-${appearance.skin}-${appearance.hairstyle}-${appearance.shirt}`}
+          appearance={appearance}
+          targetHeight={30}
+          action={moving && onFoot ? "walk" : "idle"}
+        />
+      )}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.3, 0]}>
-        <circleGeometry args={[14, 20]} />
+        <circleGeometry args={[rideMode ? 30 : 14, 24]} />
         <meshBasicMaterial color="#000000" transparent opacity={0.3} />
       </mesh>
     </group>
   );
+}
+
+/** While you ride, the camera glides along with the vehicle and settles in close. */
+function RideCamera({ active, playerPos }: { active: boolean; playerPos: MutableRefObject<THREE.Vector3> }) {
+  const controls = useThree((state) => state.controls) as MapControlsLike | null;
+  const controlsRef = useRef<MapControlsLike | null>(null);
+  const startedAt = useRef<number | null>(null);
+  const elapsed = useRef(0);
+  const offset = useRef(new THREE.Vector3());
+
+  useEffect(() => {
+    controlsRef.current = controls;
+  }, [controls]);
+
+  useFrame(({ camera }, delta) => {
+    const activeControls = controlsRef.current;
+    if (!activeControls) return;
+    if (!active) {
+      startedAt.current = null;
+      return;
+    }
+    if (startedAt.current === null) {
+      startedAt.current = 1;
+      elapsed.current = 0;
+    }
+    elapsed.current += delta;
+
+    const target = activeControls.target;
+    const follow = 1 - Math.exp(-delta * 5);
+    const moveX = (playerPos.current.x - target.x) * follow;
+    const moveY = (0 - target.y) * follow;
+    const moveZ = (playerPos.current.z - target.z) * follow;
+    target.x += moveX;
+    target.y += moveY;
+    target.z += moveZ;
+    camera.position.x += moveX;
+    camera.position.y += moveY;
+    camera.position.z += moveZ;
+
+    // Zoom in during the first moments of the ride; after that you can zoom yourself
+    if (elapsed.current < 1.6) {
+      offset.current.copy(camera.position).sub(target);
+      const length = offset.current.length();
+      if (length > RIDE_DISTANCE) {
+        offset.current.setLength(length + (RIDE_DISTANCE - length) * (1 - Math.exp(-delta * 3)));
+        camera.position.copy(target).add(offset.current);
+      }
+    }
+
+    activeControls.update();
+  });
+
+  return null;
 }
 
 /* -------------------- Day and night -------------------- */
@@ -2227,6 +2463,21 @@ type MapControlsLike = {
   update: () => void;
 };
 
+function FocusOnPlayer({ active, focus }: { active: boolean; focus: THREE.Vector3 }) {
+  const camera = useThree((state) => state.camera);
+  const controls = useThree((state) => state.controls) as MapControlsLike | null;
+
+  useEffect(() => {
+    if (!active || !controls) return;
+    const offset = camera.position.clone().sub(controls.target);
+    controls.target.copy(focus);
+    camera.position.copy(focus).add(offset);
+    controls.update();
+  }, [active, camera, controls, focus]);
+
+  return null;
+}
+
 function FitMapCamera({ active, isMobile }: { active: boolean; isMobile: boolean }) {
   const camera = useThree((state) => state.camera);
   const controls = useThree((state) => state.controls) as MapControlsLike | null;
@@ -2253,22 +2504,27 @@ function FitMapCamera({ active, isMobile }: { active: boolean; isMobile: boolean
   return null;
 }
 
-function Scene({ active, interactive, hour, appearance, selectedId, travel, isMobile, onSelectBuilding, onArrive }: {
+function Scene({ active, interactive, hour, appearance, selectedId, travel, tripActive, progressRef, onSelectBuilding, onSelectBillboard, billboardAds, onArrive }: {
   active: boolean;
   interactive: boolean;
   hour: number;
   appearance: CharacterAppearance;
   selectedId: string | null;
   travel: Travel | null;
-  isMobile: boolean;
+  tripActive: boolean;
+  progressRef: MutableRefObject<number>;
   onSelectBuilding: (building: Building) => void;
+  onSelectBillboard: (board: BillboardData) => void;
+  billboardAds: BillboardAd[];
   onArrive: (token: number) => void;
-  
 }) {
   const destination = useMemo<Point>(() => {
     const building = travel ? PLACED_BUILDINGS.find((entry) => entry.id === travel.buildingId) : undefined;
     return building ? buildingPoint(building) : HOME_POINT;
   }, [travel]);
+  const playerFocus = useMemo(() => new THREE.Vector3(...worldPosition(destination.x, destination.y, 0)), [destination]);
+  const playerPos = useRef(new THREE.Vector3());
+  const riding = tripActive && !!travel && !travel.onFoot;
   const riverGeometry = useMemo(() => createRiverGeometry(), []);
   const grassTexture = useMemo(() => createGrassTexture(), []);
   const asphaltTexture = useMemo(() => createRoadTexture(), []);
@@ -2294,20 +2550,21 @@ function Scene({ active, interactive, hour, appearance, selectedId, travel, isMo
         makeDefault
         enabled={active && interactive}
         enableRotate={false}       // Prevents looking up/down into the sky
-        enablePan={true}           // Allows dragging left/right/up/down
+        enablePan={!riding}        // Dragging would fight the ride camera
         enableZoom={true}          // Allows zooming in/out
         screenSpacePanning={true}  // Makes the drag follow your mouse perfectly
         minDistance={400}
-        maxDistance={MAP_CAMERA_MAX_DISTANCE}
-        minPolarAngle={MAP_CAMERA_POLAR_ANGLE}
-        maxPolarAngle={MAP_CAMERA_POLAR_ANGLE}
+        maxDistance={3500}
+        minPolarAngle={Math.PI / 3.5}
+        maxPolarAngle={Math.PI / 3.5}
         target={[0, 0, 0]}
         touches={{
           ONE: THREE.TOUCH.PAN,      // One finger drags the map
           TWO: THREE.TOUCH.DOLLY_PAN // Two fingers zoom
         }}
       />
-      <FitMapCamera active={active && interactive} isMobile={isMobile} />
+      <FocusOnPlayer active={active && interactive} focus={playerFocus} />
+      <RideCamera active={riding} playerPos={playerPos} />
 
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -48, 0]}>
         <planeGeometry args={[10000, 10000]} /><meshStandardMaterial map={oceanTexture} color="#d2e3e3" roughness={0.42} metalness={0.12} />
@@ -2345,13 +2602,20 @@ function Scene({ active, interactive, hour, appearance, selectedId, travel, isMo
           onVisit={onSelectBuilding}
         />
       ))}
-      {BILLBOARDS.map((board) => <Billboard key={board.title} board={board} />)}
+      {BILLBOARDS.map((board) => (
+        <Billboard
+          key={board.id}
+          board={board}
+          ads={billboardAds}
+          onSelect={onSelectBillboard}
+        />
+      ))}
       <AnimatedPlayer
         destination={destination}
         appearance={appearance}
-        speed={travel?.speed ?? 120}
-        onFoot={travel?.onFoot ?? true}
-        travelToken={travel?.token ?? null}
+        travel={travel}
+        progressRef={progressRef}
+        playerPos={playerPos}
         onArrive={onArrive}
       />
     </>
@@ -2412,6 +2676,9 @@ function CanvasSizer({ containerRef }: { containerRef: { current: HTMLDivElement
   return null;
 }
 
+/** Set to false to show the "On the way" bar only when you ride (not when you walk). */
+const SHOW_RIDE_BAR_FOR_TREK = true;
+
 export default function OsogboScene({
   active,
   interactive = true,
@@ -2425,25 +2692,88 @@ export default function OsogboScene({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [sheetBuilding, setSheetBuilding] = useState<Building | null>(null);
+  const billboardDialogOpenRef = useRef<(board: BillboardData) => void>(() => {});
+  const [billboardAds, setBillboardAds] = useState<BillboardAd[]>([]);
+  const paymentStatus = useSyncExternalStore(
+    subscribeToBillboardPaymentStatus,
+    getBillboardPaymentStatus,
+    () => null,
+  );
+  const paymentReference = useSyncExternalStore(
+    subscribeToBillboardPaymentStatus,
+    getBillboardPaymentReference,
+    () => null,
+  );
   const [travel, setTravel] = useState<Travel | null>(null);
+  // The token of the trip in progress. null when nobody is travelling.
+  const [tripToken, setTripToken] = useState<number | null>(null);
   const tokenRef = useRef(0);
-
-  const [isMobile, setIsMobile] = useState(false);
-  useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth < 768);
-    check();
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
-  }, []);
+  const arrivedRef = useRef(0);
+  const progressRef = useRef(0);
 
   const devOffsetMs = useGameStore((state) => state.devOffsetMs);
   const cash = useGameStore((state) => state.cash);
   const spendCash = useGameStore((state) => state.spendCash);
   const completedTasks = useGameStore((state) => state.completedMapTasks);
   const now = useNow(1000);
+  const openBillboardDialog = useCallback(
+    (board: BillboardData) => billboardDialogOpenRef.current(board),
+    [],
+  );
   const clock = getGameClock(now + devOffsetMs) as unknown as { hour: number; minute?: number; minutes?: number };
   const rawHour = Math.floor(clock.hour) + (clock.minute ?? clock.minutes ?? 0) / 60;
   const hour = Number.isFinite(rawHour) ? rawHour : 12;
+
+  useEffect(() => {
+    let active = true;
+    const loadAds = async () => {
+      try {
+        const response = await fetch("/api/billboards", { cache: "no-store" });
+        if (!response.ok) throw new Error(`Billboard ads request failed (${response.status}).`);
+        const result: unknown = await response.json();
+        if (!Array.isArray(result)) throw new Error("Billboard ads response was invalid.");
+        const validAds = result.filter(
+          (ad): ad is BillboardAd =>
+            typeof ad === "object" &&
+            ad !== null &&
+            "id" in ad &&
+            typeof ad.id === "string" &&
+            "boardId" in ad &&
+            typeof ad.boardId === "string" &&
+            isBillboardId(ad.boardId) &&
+            "adType" in ad &&
+            (ad.adType === "image" || ad.adType === "video") &&
+            "mediaUrl" in ad &&
+            typeof ad.mediaUrl === "string",
+        );
+        if (active) setBillboardAds(validAds);
+      } catch (error) {
+        console.error("[OsogboScene] Could not load billboard ads:", error);
+      }
+    };
+    void loadAds();
+    const refresh = window.setInterval(() => void loadAds(), 60_000);
+    return () => {
+      active = false;
+      window.clearInterval(refresh);
+    };
+  }, []);
+
+  const paymentNotice = paymentStatus === "success"
+    ? "Payment confirmed — your ad is now live for 7 days."
+    : paymentStatus === "pending"
+      ? "Payment is still being verified. If you were charged, do not pay again; your ad will appear once Paystack confirms it."
+      : paymentStatus === "failed"
+      ? "Paystack did not confirm the payment. If you were charged, do not pay again; contact support with your payment reference."
+        : null;
+
+  const dismissPaymentNotice = useCallback(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("billboardPayment");
+    url.searchParams.delete("billboardPaymentReference");
+    window.history.replaceState(window.history.state, "", url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, []);
 
   useEffect(() => {
     if (process.env.NODE_ENV === "production") return;
@@ -2481,21 +2811,40 @@ export default function OsogboScene({
     if (mode.price > 0 && !spendCash(mode.price)) return;
 
     tokenRef.current += 1;
+    const token = tokenRef.current;
     setTravel({
-      token: tokenRef.current,
+      token,
       buildingId: sheetBuilding.id,
+      mode: mode.id,
       speed: mode.speed,
       onFoot: mode.id === "trek",
     });
+    setTripToken(token);
     setSheetBuilding(null);
   }, [sheetBuilding, spendCash]);
 
-  // The character reached the building: go inside (this also completes its task)
+  // The character reached the building (or the player pressed Skip): go inside.
+  // This also completes the building's task.
   const handleArrive = useCallback((token: number) => {
     if (!travel || travel.token !== token) return;
+    if (arrivedRef.current === token) return;
+    arrivedRef.current = token;
+    setTripToken(null);
     const building = PLACED_BUILDINGS.find((entry) => entry.id === travel.buildingId);
     if (building) onEnterBuilding(building.name, building.id);
   }, [travel, onEnterBuilding]);
+
+  const handleSkip = useCallback(() => {
+    if (travel && tripToken !== null) handleArrive(travel.token);
+  }, [travel, tripToken, handleArrive]);
+
+  const tripBuilding =
+    travel && tripToken !== null
+      ? PLACED_BUILDINGS.find((entry) => entry.id === travel.buildingId)
+      : undefined;
+  const tripMode = travel ? TRANSPORT_MODES.find((entry) => entry.id === travel.mode) : undefined;
+  const showRideBar =
+    active && interactive && !!tripBuilding && !!tripMode && !!travel && (SHOW_RIDE_BAR_FOR_TREK || !travel.onFoot);
 
   return (
     <>
@@ -2509,13 +2858,7 @@ export default function OsogboScene({
           shadows
           style={{ width: "100%", height: "100%" }}
           dpr={[1, 1.5]}
-          camera={{ 
-            position: [0, 2450, 2350], 
-            rotation: [-Math.PI / 4, 0, 0], 
-            fov: 45, 
-            near: 1, 
-            far: 12000 
-          }}
+          camera={{ position: [0, 2450, 2350], rotation: [-Math.PI / 4, 0, 0], fov: 45, near: 1, far: 12000 }}
           gl={{ antialias: true, alpha: false }}
           onCreated={({ gl }) => {
             gl.setClearColor("#4babc0");
@@ -2530,14 +2873,27 @@ export default function OsogboScene({
             appearance={appearance}
             selectedId={sheetBuilding?.id ?? null}
             travel={travel}
-            isMobile={isMobile}
+            tripActive={tripToken !== null}
+            progressRef={progressRef}
             onSelectBuilding={setSheetBuilding}
+            onSelectBillboard={openBillboardDialog}
+            billboardAds={billboardAds}
             onArrive={handleArrive}
           />
         </Canvas>
 
         <span className="sr-only" aria-live="polite">{sheetBuilding ? `Selected ${sheetBuilding.name}` : "Osogbo map"}</span>
       </div>
+
+      {showRideBar && tripBuilding && tripMode && (
+        <RideBar
+          emoji={tripMode.emoji}
+          modeName={tripMode.name}
+          destination={tripBuilding.name}
+          progressRef={progressRef}
+          onSkip={handleSkip}
+        />
+      )}
 
       {active && interactive && sheetBuilding && (
         <BuildingSheet
@@ -2551,6 +2907,16 @@ export default function OsogboScene({
           onClose={closeSheet}
           onGo={handleGo}
         />
+      )}
+      {active && interactive && <BillboardDialogController openRef={billboardDialogOpenRef} />}
+      {active && interactive && paymentNotice && (
+        <div role="status" className="fixed left-1/2 top-[calc(env(safe-area-inset-top)+1rem)] z-[80] flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 items-start gap-3 rounded-2xl border border-white/10 bg-[#141f2b]/95 px-4 py-3 text-sm font-semibold text-white shadow-xl backdrop-blur">
+          <span className="flex-1">
+            {paymentNotice}
+            {paymentReference && <span className="mt-1 block break-all text-xs font-normal text-white/65">Reference: {paymentReference}</span>}
+          </span>
+          <button type="button" onClick={dismissPaymentNotice} aria-label="Dismiss payment message" className="shrink-0 rounded-full bg-white/10 px-2 py-1 text-xs">Close</button>
+        </div>
       )}
     </>
   );

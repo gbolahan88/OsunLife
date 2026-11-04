@@ -86,6 +86,21 @@ export default function GameApp({
   const repayLoan = useGameStore((s) => s.repayLoan);
   const [taskNotice, setTaskNotice] = useState<string | null>(null);
 
+  const handleCrimeTravel = useCallback((buildingId: string) => {
+    const destinations: Record<string, string> = {
+      "state-cid": "State CID Police Station",
+      "federal-high-court": "Federal High Court",
+    };
+    const buildingName = destinations[buildingId];
+    if (!buildingName) {
+      console.error(`[GameApp] Unknown crime destination: ${buildingId}`);
+      return;
+    }
+    setLastBuilding(buildingName);
+    setLastBuildingId(buildingId);
+    setTab("home");
+  }, []);
+
   const now = useNow(1000);
   const ready = loadedUsername === username;
 
@@ -276,6 +291,7 @@ export default function GameApp({
                 onExit={() => setTab("map")}
                 onOpenPhone={() => setPhoneOpen(true)}
                 appearance={appearance}
+                onCrimeTravel={handleCrimeTravel}
               />
             )}
 

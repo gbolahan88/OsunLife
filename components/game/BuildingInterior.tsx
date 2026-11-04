@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronDown } from "lucide-react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { Html, OrbitControls, useGLTF } from "@react-three/drei";
 import {
@@ -53,7 +53,14 @@ import {
   type MoneyDropRow,
   type VenueEventRow,
 } from "@/components/multiplayer/useVenueRealtime";
-import { venueBuy } from "@/lib/wallet";
+import {
+  getCrimeState,
+  performCrimeAction,
+  type CrimeAction,
+  type CrimeResult,
+  venueBuy,
+} from "@/lib/wallet";
+import { formatNaira } from "@/lib/format";
 
 
 type BuyResult = { ok: true } | { ok: false; reason: string };
@@ -118,9 +125,47 @@ const INTERIORS: Record<string, InteriorConfig> = {
     ...[-5, 0, 5].map(x => ({ kind: "chair" as const, x, z: -1 })),
     { kind: "sofa", x: 0, z: 3, color: "#527e83" }, { kind: "plant", x: -8, z: 4 }, { kind: "plant", x: 8, z: 4 },
   ]},
-  "bank-tower": { subtitle: "Business office", floor: "#c6c7c2", wall: "#edf0ec", accent: "#355c6c", fixtures: [
-    { kind: "cashier", x: 0, z: -5, color: "#355c6c" }, { kind: "office-desk", x: -5, z: -1 }, { kind: "office-desk", x: 5, z: -1 },
-    { kind: "chair", x: -5, z: 1 }, { kind: "chair", x: 5, z: 1 }, { kind: "sofa", x: 0, z: 4, color: "#355c6c" },
+  bank: { 
+    subtitle: "Osun Community Bank", 
+    floor: "#e5e3df", 
+    wall: "#f0f0f0", 
+    accent: "#2d4a5c", 
+    fixtures: [
+      // Teller counters at the back
+      { kind: "counter", x: -5, z: -5, color: "#2d4a5c" },
+      { kind: "counter", x: 0, z: -5, color: "#2d4a5c" },
+      { kind: "counter", x: 5, z: -5, color: "#2d4a5c" },
+      
+      // Vault door on the right
+      { kind: "locker", x: 9, z: -5, color: "#333" },
+
+      // Waiting area (chairs lined up)
+      { kind: "chair", x: -4, z: 1, color: "#2d4a5c", rotation: 0 },
+      { kind: "chair", x: -2, z: 1, color: "#2d4a5c", rotation: 0 },
+      { kind: "chair", x: 2, z: 1, color: "#2d4a5c", rotation: 0 },
+      { kind: "chair", x: 4, z: 1, color: "#2d4a5c", rotation: 0 },
+      
+      // Waiting tables
+      { kind: "table", x: 0, z: 1, color: "#8d6444" },
+
+      // Plants (inside, no trees outside)
+      { kind: "plant", x: -9, z: 5 },
+      { kind: "plant", x: 9, z: 5 },
+    ]
+  },
+  "state-cid": { subtitle: "State CID holding station", floor: "#b9c1c2", wall: "#e5e8e4", accent: "#344b67", fixtures: [
+    { kind: "counter", x: 4, z: -5, color: "#344b67" },
+    { kind: "office-desk", x: 5, z: 1 }, { kind: "chair", x: 5, z: 3 },
+  ]},
+  "federal-high-court": { subtitle: "Federal High Court", floor: "#b49a73", wall: "#eee4d0", accent: "#82704f", fixtures: [
+    { kind: "throne", x: 0, z: -5, color: "#82704f" },
+    ...[-6, -2, 2, 6].map((x) => ({ kind: "stadium-seat" as const, x, z: 3 })),
+    { kind: "office-desk", x: 0, z: 0 },
+  ]},
+  church: { subtitle: "Osogbo Community Church", floor: "#b9aa8c", wall: "#f0e9dc", accent: "#9b5442", fixtures: [
+    { kind: "altar", x: 0, z: -5, color: "#9b5442" },
+    ...[-6, -2, 2, 6].map((x) => ({ kind: "stadium-seat" as const, x, z: 0 })),
+    ...[-6, -2, 2, 6].map((x) => ({ kind: "stadium-seat" as const, x, z: 3 })),
   ]},
   "grove-gate": { subtitle: "Osun Grove visitor centre", floor: "#8b7952", wall: "#d6d2ae", accent: "#39784b", fixtures: [
     ...[-7, -4, 4, 7].map((x, i) => ({ kind: "plant" as const, x, z: -4 + (i % 2) })),
@@ -669,6 +714,7 @@ function LocalPlayer({
   boxes,
   dancing,
   sitting,
+  confined,
   localRef,
   targetRef,
 }: {
@@ -678,6 +724,7 @@ function LocalPlayer({
   boxes: Box[];
   dancing: boolean;
   sitting: boolean;
+  confined: boolean;
   localRef: MutableRefObject<RoomPose>;
   targetRef: MutableRefObject<{ x: number; z: number } | null>;
 }) {
@@ -688,7 +735,7 @@ function LocalPlayer({
   const actionRef = useRef<RoomAction>("idle");
   const [action, setAction] = useState<RoomAction>("idle");
   const [spawn] = useState<[number, number, number]>(() => {
-    const [x, z] = resolveCircle(boxes, SPAWN_X, SPAWN_Z);
+    const [x, z] = resolveCircle(boxes, confined ? -7 : SPAWN_X, confined ? -4 : SPAWN_Z);
     return [x, 0, z];
   });
 
@@ -709,11 +756,13 @@ function LocalPlayer({
         stuck.current = 0;
       } else {
         const step = Math.min(distance, WALK_SPEED * delta);
-        const [nx, nz] = resolveCircle(
+        const [resolvedX, resolvedZ] = resolveCircle(
           boxes,
           g.position.x + (dx / distance) * step,
           g.position.z + (dz / distance) * step,
         );
+        const nx = confined ? THREE.MathUtils.clamp(resolvedX, -10, -4) : resolvedX;
+        const nz = confined ? THREE.MathUtils.clamp(resolvedZ, -6, -2) : resolvedZ;
         const moved = Math.hypot(nx - g.position.x, nz - g.position.z);
         g.position.x = nx;
         g.position.z = nz;
@@ -916,11 +965,156 @@ function MarketCrowd() {
   );
 }
 
+function DetentionCell() {
+    const barPositions = Array.from({ length: 12 }, (_, index) => -3.2 + index * 0.58);
+    const sidePositions = Array.from({ length: 8 }, (_, index) => -2 + index * 0.58);
+    const inmates = [
+      { name: "Bot 1", position: [-1.25, 0, 0.2] as [number, number, number], shirt: "#b94f45" },
+      { name: "Bot 2", position: [1.25, 0, 0.2] as [number, number, number], shirt: "#527a9a" },
+    ];
+
+    return (
+      <group position={[-7, 0, -4]}>
+        <mesh position={[0, 0, 0]} receiveShadow>
+          <boxGeometry args={[7, 0.12, 5]} />
+          <meshStandardMaterial color="#77766e" />
+        </mesh>
+        <mesh position={[0, 0.52, -1.35]} castShadow>
+          <boxGeometry args={[4.2, 0.35, 0.9]} />
+          <meshStandardMaterial color="#665440" roughness={0.85} />
+        </mesh>
+        {[-1.8, 1.8].map((x) => (
+          <mesh key={x} position={[x, 0.25, -1.35]}>
+            <boxGeometry args={[0.18, 0.55, 0.72]} />
+            <meshStandardMaterial color="#4d4034" />
+          </mesh>
+        ))}
+        <mesh position={[0, 0.08, 0]}>
+          <boxGeometry args={[7.2, 0.08, 5.2]} />
+          <meshStandardMaterial color="#30383a" />
+        </mesh>
+        <mesh position={[-3.5, 1.55, 0]}><boxGeometry args={[0.12, 3.1, 5.1]} /><meshStandardMaterial color="#30383a" metalness={0.75} /></mesh>
+        <mesh position={[3.5, 1.55, 0]}><boxGeometry args={[0.12, 3.1, 5.1]} /><meshStandardMaterial color="#30383a" metalness={0.75} /></mesh>
+        <mesh position={[0, 1.55, -2.5]}><boxGeometry args={[7.1, 3.1, 0.12]} /><meshStandardMaterial color="#30383a" metalness={0.75} /></mesh>
+        {barPositions.map((x) => (
+          <mesh key={`front-${x}`} position={[x, 1.55, 2.5]}>
+            <cylinderGeometry args={[0.045, 0.045, 3.1, 6]} />
+            <meshStandardMaterial color="#30383a" metalness={0.8} roughness={0.35} />
+          </mesh>
+        ))}
+        {[-1, 2.95].map((y) => (
+          <mesh key={y} position={[0, y, 2.5]}>
+            <boxGeometry args={[7.1, 0.1, 0.1]} />
+            <meshStandardMaterial color="#30383a" metalness={0.8} />
+          </mesh>
+        ))}
+        {sidePositions.flatMap((z) =>
+          [-3.5, 3.5].map((x) => (
+            <mesh key={`${x}-${z}`} position={[x, 1.55, z]}>
+              <cylinderGeometry args={[0.045, 0.045, 3.1, 6]} />
+              <meshStandardMaterial color="#30383a" metalness={0.8} roughness={0.35} />
+            </mesh>
+          ))
+        )}
+        <Suspense fallback={null}>
+          {inmates.map((inmate, index) => (
+            <group key={inmate.name} position={inmate.position}>
+              <CharacterModel
+                appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: inmate.shirt }}
+                targetHeight={PERSON_HEIGHT}
+                action={index === 0 ? "sit" : "idle"}
+              />
+              <NameTag name={inmate.name} />
+            </group>
+          ))}
+        </Suspense>
+      </group>
+    );
+}
+
+function OfferingBox() {
+    return (
+      <group position={[0, 0, -2.6]}>
+        <mesh position={[0, 0.65, 0]} castShadow>
+          <boxGeometry args={[1.8, 1.2, 1.2]} />
+          <meshStandardMaterial color="#75472d" roughness={0.8} />
+        </mesh>
+        <mesh position={[0, 1.28, 0]}>
+          <boxGeometry args={[1.9, 0.12, 1.3]} />
+          <meshStandardMaterial color="#c39451" metalness={0.35} />
+        </mesh>
+        <mesh position={[0, 1.35, 0]}>
+          <boxGeometry args={[0.65, 0.03, 0.12]} />
+          <meshStandardMaterial color="#302a25" />
+        </mesh>
+        <Html position={[0, 2.2, 0]} center>
+          <span className="whitespace-nowrap rounded-full bg-white/90 px-2 py-1 text-[10px] font-bold text-[#3b342b] shadow">
+            Offering box
+          </span>
+        </Html>
+      </group>
+    );
+}
+
+const BUILDING_STAFF: Record<string, Array<{
+    name: string;
+    position: [number, number, number];
+    shirt: string;
+    action: "idle" | "work";
+}>> = {
+    bank: [
+      { name: "Amina · Teller", position: [-5, 0, -6.7], shirt: "#28776e", action: "work" },
+      { name: "Tunde · Teller", position: [0, 0, -6.7], shirt: "#355c6c", action: "work" },
+      { name: "Bisi · Teller", position: [5, 0, -6.7], shirt: "#b7793f", action: "work" },
+    ],
+    "state-cid": [
+      { name: "Officer Akande", position: [5.5, 0, -6.5], shirt: "#243c67", action: "idle" },
+      { name: "Desk Sergeant", position: [7.6, 0, 2.5], shirt: "#243c67", action: "work" },
+    ],
+    "federal-high-court": [
+      { name: "Justice Adeyemi", position: [0, 0, -6.7], shirt: "#342f35", action: "idle" },
+      { name: "Counsel A", position: [-8, 0, -5.8], shirt: "#183e63", action: "work" },
+      { name: "Counsel B", position: [8, 0, -5.8], shirt: "#5b3e31", action: "work" },
+    ],
+    church: [
+      { name: "Pastor Olumide", position: [0, 0, -6.8], shirt: "#754536", action: "idle" },
+      { name: "Church Usher", position: [8, 0, -5.5], shirt: "#47765c", action: "idle" },
+    ],
+};
+
+function BuildingStaff({ buildingId }: { buildingId: string }) {
+    const staff = BUILDING_STAFF[buildingId] ?? [];
+    if (!staff.length) return null;
+
+    return (
+      <Suspense fallback={null}>
+        {staff.map((person) => (
+          <group key={person.name} position={person.position}>
+            <CharacterModel
+              appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: person.shirt }}
+              targetHeight={PERSON_HEIGHT}
+              action={person.action}
+            />
+            <NameTag name={person.name} />
+          </group>
+        ))}
+      </Suspense>
+    );
+}
+
+const ROOM_SEATS: Record<string, Array<{ x: number; z: number; label: string }>> = {
+  bank: [-4, -2, 2, 4].map((x) => ({ x, z: 1, label: "Waiting chair" })),
+  "state-cid": [{ x: -7, z: -5.4, label: "Cell bench" }, { x: 7, z: 4, label: "Waiting chair" }],
+  "federal-high-court": [-6, -2, 2, 6].map((x) => ({ x, z: 3, label: "Court bench" })),
+  church: [-6, -2, 2, 6].map((x) => ({ x, z: 0, label: "Church pew" })),
+};
+
 /* ───────────── The room ───────────── */
 
 function InteriorScene({
   config,
   buildingId,
+  detained,
   players,
   bubbles,
   localId,
@@ -938,6 +1132,8 @@ function InteriorScene({
 }: {
   config: InteriorConfig;
   buildingId: string;
+  detained: boolean;
+  onSeatAt: (pos: [number, number], action: "sit" | "idle") => void;
   players: RemotePlayer[];
   bubbles: Record<string, string>;
   localId: string;
@@ -951,7 +1147,6 @@ function InteriorScene({
   localRef: MutableRefObject<RoomPose>;
   targetRef: MutableRefObject<{ x: number; z: number } | null>;
   onFloorTap: (x: number, z: number) => void;
-  onSeatAt: (pos: [number, number], action: "sit" | "idle") => void;
 }) {
   const isClub = buildingId === "zeus-club";
   const isMarket = buildingId === "market";
@@ -996,6 +1191,22 @@ function InteriorScene({
     )}
 
     {config.fixtures.map((fixture, index) => <FixtureModel key={`${fixture.kind}-${index}`} fixture={fixture} />)}
+    {buildingId === "state-cid" && <DetentionCell />}
+    {buildingId === "church" && <OfferingBox />}
+    <BuildingStaff buildingId={buildingId} />
+    {(ROOM_SEATS[buildingId] ?? []).map((seat) => (
+      <mesh
+        key={`${seat.label}-${seat.x}-${seat.z}`}
+        position={[seat.x, 0.8, seat.z]}
+        onClick={(event) => {
+          event.stopPropagation();
+          onSeatAt([seat.x, seat.z + 1], "sit");
+        }}
+      >
+        <boxGeometry args={[1.8, 1.6, 1.8]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+    ))}
     {LOUNGE_BUILDINGS.has(buildingId) && (
       <Suspense fallback={null}>
         {/* Bar at the back */}
@@ -1063,6 +1274,7 @@ function InteriorScene({
         boxes={boxes}
         dancing={dancing}
         sitting={sitting}
+        confined={detained}
         localRef={localRef}
         targetRef={targetRef}
       />
@@ -1077,16 +1289,19 @@ export default function BuildingInterior({
   appearance = DEFAULT_CHARACTER_APPEARANCE,
   onExit,
   onOpenPhone,
+  onCrimeTravel,
 }: {
   buildingId: string;
   buildingName: string;
   appearance?: CharacterAppearance;
   onExit: () => void;
+  onCrimeTravel: (buildingId: string) => void;
   /** Called after a player is tapped so the phone opens on their chat */
   onOpenPhone?: () => void;
 }) {
   const config = INTERIORS[buildingId] ?? DEFAULT_INTERIOR;
   const venue = isVenue(buildingId);
+  const crimeBuilding = ["bank", "state-cid", "federal-high-court", "church"].includes(buildingId);
   const { userId, username, players, openThread } = useMultiplayer();
   const here = useMemo(
     () => players.filter((player) => player.place === buildingId),
@@ -1096,6 +1311,13 @@ export default function BuildingInterior({
   const cash = useGameStore((state) => state.cash);
   const applyServerBalance = useGameStore((state) => state.applyServerBalance);
 
+  const [crimeState, setCrimeState] = useState<CrimeResult | null>(null);
+  const [crimeNotice, setCrimeNotice] = useState<string | null>(null);
+  const [crimeLoading, setCrimeLoading] = useState(crimeBuilding);
+  const [crimeBusy, setCrimeBusy] = useState(false);
+  const [crimeLoadFailed, setCrimeLoadFailed] = useState(false);
+  const [crimePanelOpen, setCrimePanelOpen] = useState(true);
+  const [crimeRetry, setCrimeRetry] = useState(0);
   const [dancing, setDancing] = useState(false);
   const [sitting, setSitting] = useState(false);
   const [bubbles, setBubbles] = useState<Record<string, string>>({});
@@ -1113,6 +1335,41 @@ export default function BuildingInterior({
     const timers = bubbleTimers.current;
     return () => timers.forEach((id) => window.clearTimeout(id));
   }, []);
+
+  useEffect(() => {
+    if (!crimeBuilding) return;
+    let active = true;
+    void getCrimeState()
+      .then((result) => {
+        if (!active) return;
+        if (!result.ok) {
+          setCrimeNotice(result.reason);
+          setCrimeLoadFailed(true);
+          return;
+        }
+        setCrimeLoadFailed(false);
+        applyServerBalance(result.balance, result.version);
+        setCrimeState(result);
+        if (result.status === "station" && buildingId !== "state-cid") {
+          onCrimeTravel("state-cid");
+        } else if (result.status === "court" && buildingId !== "federal-high-court") {
+          onCrimeTravel("federal-high-court");
+        }
+      })
+      .catch((error: unknown) => {
+        console.error("[BuildingInterior] Failed to load crime state:", error);
+        if (active) {
+          setCrimeNotice("Could not load your police record. Try again.");
+          setCrimeLoadFailed(true);
+        }
+      })
+      .finally(() => {
+        if (active) setCrimeLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [applyServerBalance, buildingId, crimeBuilding, crimeRetry, onCrimeTravel]);
 
   const showBubble = useCallback((id: string, emoji: string) => {
     setBubbles((current) => ({ ...current, [id]: emoji }));
@@ -1183,6 +1440,40 @@ export default function BuildingInterior({
     [applyServerBalance, buildingId, pushFx, username],
   );
 
+  const handleCrimeAction = useCallback(async (action: CrimeAction) => {
+    setCrimeBusy(true);
+    setCrimeNotice(null);
+    try {
+      const result = await performCrimeAction(action);
+      if (!result.ok) {
+        setCrimeNotice(result.reason);
+        return;
+      }
+
+      applyServerBalance(result.balance, result.version);
+      setCrimeState(result);
+      if (result.outcome === "loot") {
+        setCrimeNotice(`You got ${formatNaira(result.loot)} and slipped away.`);
+      } else if (result.outcome === "offering") {
+        setCrimeNotice(`You took ${formatNaira(result.loot || 50000)} from the offering box.`);
+      } else if (result.outcome === "arrested") {
+        setCrimeNotice(
+          result.status === "station"
+            ? "You were arrested and taken to State CID."
+            : "You were arrested and taken to Federal High Court.",
+        );
+        onCrimeTravel(result.status === "station" ? "state-cid" : "federal-high-court");
+      } else if (result.outcome === "released") {
+        setCrimeNotice("You are free to leave.");
+      }
+    } catch (error: unknown) {
+      console.error("[BuildingInterior] Crime action failed:", error);
+      setCrimeNotice("That action failed. Please try again.");
+    } finally {
+      setCrimeBusy(false);
+    }
+  }, [applyServerBalance, onCrimeTravel]);
+
   const handleReact = useCallback(
     (reactionId: string) => {
       const reaction = REACTIONS.find((item) => item.id === reactionId);
@@ -1208,8 +1499,11 @@ export default function BuildingInterior({
     <Canvas shadows dpr={[1, 1.5]} camera={{ position: [0, 10, 19], fov: 48, near: .1, far: 100 }} gl={{ antialias: true }}>
       <OrbitControls makeDefault enablePan={false} enableRotate enableZoom minDistance={12} maxDistance={27} maxPolarAngle={Math.PI / 2.05} target={[0, 1.5, 0]} />
       <InteriorScene
+        key={`${buildingId}-${crimeState?.status ?? "loading"}`}
         config={config}
         buildingId={buildingId}
+        detained={buildingId === "state-cid" && crimeState?.status === "station"}
+        onSeatAt={handleSeatAt}
         players={here}
         bubbles={bubbles}
         localId={userId}
@@ -1223,7 +1517,6 @@ export default function BuildingInterior({
         localRef={localRef}
         targetRef={targetRef}
         onFloorTap={handleFloorTap}
-        onSeatAt={handleSeatAt}
       />
     </Canvas>
 
@@ -1256,7 +1549,7 @@ export default function BuildingInterior({
           onWalkToSpot={handleSpot}
           onChat={chatWith}
         />
-      ) : (
+      ) : !crimeBuilding ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-44 flex flex-col items-center gap-2 px-3">
           <p className="rounded-full bg-black/45 px-3 py-1 text-[10px] font-semibold text-white backdrop-blur">
             Tap the floor to walk
@@ -1274,6 +1567,228 @@ export default function BuildingInterior({
             <span aria-hidden>💃</span>
             {dancing ? "Stop dancing" : "Dance"}
           </button>
+        </div>
+      ) : null}
+
+      {crimeBuilding && !crimePanelOpen && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6.5rem)] flex flex-col items-center gap-2 px-3">
+          <p className="rounded-full bg-black/45 px-3 py-1 text-[10px] font-semibold text-white backdrop-blur">
+            Tap the floor or a seat to move around
+          </p>
+          <button
+            type="button"
+            onClick={() => setCrimePanelOpen(true)}
+            className="pointer-events-auto flex h-11 items-center gap-2 rounded-full border border-white/15 bg-[#1a2a30]/95 px-5 text-[13px] font-extrabold text-white shadow-lg backdrop-blur"
+          >
+            <span>{buildingId === "bank" ? "🏦" : buildingId === "state-cid" ? "🚓" : buildingId === "federal-high-court" ? "⚖️" : "⛪"}</span>
+            {crimeLoadFailed ? "Retry connection" : "Open venue actions"}
+          </button>
+        </div>
+      )}
+
+      {crimeBuilding && crimePanelOpen && (
+        <div className="pointer-events-auto absolute inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+5rem)] z-40 flex max-h-[80vh] flex-col overflow-hidden rounded-[2rem] bg-[#1a2a30]/95 text-white shadow-[0_10px_40px_rgba(0,0,0,0.8)] backdrop-blur-2xl border border-white/10">
+          
+          {/* Header */}
+          <div className="flex items-start justify-between px-5 pt-5 pb-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-2xl">
+                {buildingId === "bank" && "🏦"}
+                {buildingId === "state-cid" && "🚓"}
+                {buildingId === "federal-high-court" && "⚖️"}
+                {buildingId === "church" && "⛪"}
+              </div>
+              <div>
+                <h2 className="text-xl font-extrabold tracking-tight">{buildingName}</h2>
+                <p className="text-xs text-white/70">
+                  {buildingId === "bank" && "Safe & Secure Banking"}
+                  {buildingId === "state-cid" && "State CID Holding Station"}
+                  {buildingId === "federal-high-court" && "Federal High Court"}
+                  {buildingId === "church" && "Offering & Donations"}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCrimePanelOpen(false)}
+                aria-label="Collapse venue actions"
+                className="rounded-full bg-white/10 p-2 text-white/80 hover:bg-white/20"
+              >
+                <ChevronDown size={18} />
+              </button>
+              <button onClick={onExit} aria-label="Return to map" className="rounded-full bg-white/10 p-2 text-white/80 hover:bg-white/20">
+                <ArrowLeft size={16} />
+              </button>
+            </div>
+          </div>
+
+          {/* Status Message */}
+          <div className="px-5 pb-4">
+            <div className="flex items-center gap-2 rounded-full bg-white/5 border border-white/10 px-4 py-3">
+              <span className="text-xs font-medium text-white/80">
+                {crimeNotice ??
+                  (crimeLoading
+                    ? "Checking your record…"
+                    : crimeState?.status === "station"
+                      ? `You are being held. Stolen: ${formatNaira(crimeState.stolenAmount)}.`
+                      : crimeState?.status === "court"
+                        ? `Your case is in court. Stolen: ${formatNaira(crimeState.stolenAmount)}.`
+                        : "Choose an action below.")}
+              </span>
+            </div>
+            {crimeLoadFailed && (
+              <button
+                type="button"
+                disabled={crimeLoading}
+                onClick={() => {
+                  setCrimeLoading(true);
+                  setCrimeLoadFailed(false);
+                  setCrimeNotice(null);
+                  setCrimeRetry((attempt) => attempt + 1);
+                }}
+                className="mt-2 rounded-full bg-white/10 px-4 py-2 text-xs font-bold hover:bg-white/15 disabled:opacity-50"
+              >
+                {crimeLoading ? "Connecting…" : "Retry"}
+              </button>
+            )}
+          </div>
+
+          {/* Action Cards */}
+          <div className="flex flex-col gap-2 overflow-y-auto px-5 pb-4 scrollbar-hide">
+            {buildingId === "bank" && crimeState?.status === "clear" && (
+              <>
+                <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#bd783c] text-xl">💰</div>
+                    <div>
+                      <p className="text-sm font-bold">Rob the Bank</p>
+                      <p className="text-[10px] text-white/50">40% chance of arrest</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={crimeLoading || crimeBusy}
+                    onClick={() => void handleCrimeAction("bank_rob")}
+                    className="rounded-full bg-[#bd783c] px-4 py-2 text-xs font-extrabold shadow-lg disabled:opacity-50"
+                  >
+                    Attempt
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#6d5aa5] text-xl">💻</div>
+                    <div>
+                      <p className="text-sm font-bold">Hack the Bank</p>
+                      <p className="text-[10px] text-white/50">Immediate arrest and court case</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={crimeLoading || crimeBusy}
+                    onClick={() => void handleCrimeAction("bank_hack")}
+                    className="rounded-full bg-[#6d5aa5] px-4 py-2 text-xs font-extrabold shadow-lg disabled:opacity-50"
+                  >
+                    Attempt
+                  </button>
+                </div>
+              </>
+            )}
+
+            {buildingId === "church" && (
+              <button
+                type="button"
+                disabled={crimeLoading || crimeBusy || crimeState?.status !== "clear" || crimeState?.offeringClaimed}
+                onClick={() => void handleCrimeAction("church_offering")}
+                className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3 hover:bg-white/10 disabled:opacity-50"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#9b5442] text-xl">🕊️</div>
+                  <div className="text-left">
+                    <p className="text-sm font-bold">{crimeState?.offeringClaimed ? "Offering taken" : "Take Offering"}</p>
+                    <p className="text-[10px] text-white/50">+₦50,000 · once only</p>
+                  </div>
+                </div>
+                <span className="text-xs font-bold text-white/70">Take</span>
+              </button>
+            )}
+
+            {buildingId === "state-cid" && crimeState?.status === "station" && (
+              <>
+                <p className="rounded-xl bg-white/5 px-3 py-2 text-xs text-white/70">
+                  Case amount: {formatNaira(crimeState.stolenAmount)} · Bail and damages: ₦150,000
+                </p>
+                <button
+                  type="button"
+                  disabled={crimeLoading || crimeBusy || crimeState.stolenAmount >= 100000 || cash < 150000}
+                  onClick={() => void handleCrimeAction("bail")}
+                  className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3 hover:bg-white/10 disabled:opacity-50"
+                >
+                  <span className="text-left text-sm font-bold">
+                    {crimeState.stolenAmount >= 100000 ? "Bail unavailable for this amount" : "Pay bail and damages"}
+                    {crimeState.stolenAmount < 100000 && cash < 150000 && <span className="block text-[10px] font-medium text-white/50">Not enough cash</span>}
+                  </span>
+                  <span className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-bold">₦150,000</span>
+                </button>
+              </>
+            )}
+
+            {buildingId === "federal-high-court" && crimeState?.status === "court" && (
+              <>
+                <p className="rounded-xl bg-white/5 px-3 py-2 text-xs text-white/70">
+                  Case amount: {formatNaira(crimeState.stolenAmount)}
+                </p>
+                <button
+                  type="button"
+                  disabled={crimeLoading || crimeBusy || cash < 120000}
+                  onClick={() => void handleCrimeAction("court_lawyer")}
+                  className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3 hover:bg-white/10 disabled:opacity-50"
+                >
+                  <span className="text-left">
+                    <span className="block text-sm font-bold">Hire a Lawyer</span>
+                    {cash < 120000 && <span className="text-[10px] text-white/50">Not enough cash</span>}
+                  </span>
+                  <span className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-bold">₦120,000</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={crimeLoading || crimeBusy || cash < crimeState.stolenAmount}
+                  onClick={() => void handleCrimeAction("court_defend")}
+                  className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3 hover:bg-white/10 disabled:opacity-50"
+                >
+                  <span className="text-left">
+                    <span className="block text-sm font-bold">Defend Yourself</span>
+                    <span className="text-[10px] text-white/50">Forfeits the stolen amount</span>
+                  </span>
+                  <span className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-bold">
+                    {formatNaira(crimeState.stolenAmount)}
+                  </span>
+                </button>
+              </>
+            )}
+          </div>
+
+          {crimeState && (
+            <div className="px-5 pb-4">
+              <button
+                type="button"
+                disabled={crimeBusy || crimeLoading}
+                onClick={() => {
+                  const seat = buildingId === "state-cid" && crimeState.status === "station"
+                    ? ROOM_SEATS["state-cid"][0]
+                    : ROOM_SEATS[buildingId]?.find((entry) => entry.label !== "Cell bench");
+                  if (seat) handleSeatAt([seat.x, seat.z + 1], "sit");
+                }}
+                className="w-full rounded-full border border-white/10 bg-white/5 px-4 py-2.5 text-xs font-bold text-white/85 hover:bg-white/10 disabled:opacity-40"
+              >
+                🪑 {buildingId === "state-cid" && crimeState.status === "station"
+                  ? "Sit on the cell bench"
+                  : `Sit in the ${buildingId === "bank" ? "waiting area" : buildingId === "federal-high-court" ? "gallery" : buildingId === "church" ? "pew" : "waiting area"}`}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

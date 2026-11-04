@@ -8,6 +8,11 @@ export const metadata: Metadata = {
   title: "Osun Life — live your Osun story",
   description:
     "A life-sim game set in Osun State. Explore Osogbo, Ile-Ife, Ede and Ilesa.",
+  keywords: ["Osun", "Osun Life game", "osun game", "uniosun", "lagos life", "Osogbo game", "life sim"],
+    icons: {
+      icon: "/app/favicon.ico",
+      apple: "/app/favicon.ico",
+    },
 };
 
 export const viewport: Viewport = {

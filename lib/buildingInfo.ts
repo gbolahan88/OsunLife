@@ -73,10 +73,25 @@ export const BUILDING_INFO: Record<string, BuildingInfo> = {
     blurb: "Osun's civic administration office. Permits, paperwork and public services.",
     tags: ["Government", "Offices", "Paperwork"],
   },
-  "bank-tower": {
+  bank: {
     area: "Oroki",
-    blurb: "Oroki Heights, a business tower with offices and banking services.",
-    tags: ["Banking", "Offices", "Business"],
+    blurb: "Osun Community Bank, a neighborhood branch with a busy teller hall.",
+    tags: ["Banking", "Teller hall", "Business"],
+  },
+  "state-cid": {
+    area: "Osogbo",
+    blurb: "The State Criminal Investigation Department. The station has a holding cell and an officer on duty.",
+    tags: ["Police", "Holding cell", "State CID"],
+  },
+  "federal-high-court": {
+    area: "Osogbo",
+    blurb: "The Federal High Court, where serious cases are heard.",
+    tags: ["Court", "Legal services", "Hearings"],
+  },
+  church: {
+    area: "Osogbo",
+    blurb: "A neighborhood church with a quiet sanctuary and a community offering box.",
+    tags: ["Sanctuary", "Community", "Offering box"],
   },
   "grove-gate": {
     area: "Osun Grove",
