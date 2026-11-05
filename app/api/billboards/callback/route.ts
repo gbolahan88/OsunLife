@@ -22,8 +22,10 @@ function redirectToMap(request: NextRequest, result: "success" | "failed" | "pen
 }
 
 function amountMatches(value: unknown, expected: number) {
-  return (typeof value === "number" || (typeof value === "string" && value.trim() !== "")) &&
-    Number(value) === expected;
+  const received = Number(value);
+  if (!Number.isFinite(received)) return false;
+
+  return received >= expected;
 }
 
 export async function GET(request: NextRequest) {
