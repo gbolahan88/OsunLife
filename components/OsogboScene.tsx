@@ -1348,7 +1348,6 @@ function Billboard({
           e.stopPropagation();
           onSelect(board);
         }}
-        style={{ cursor: "pointer" }}
       >
         <planeGeometry args={[board.width - 14, 88]} />
         <meshBasicMaterial transparent opacity={0} />
