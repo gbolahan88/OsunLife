@@ -28,7 +28,6 @@ import {
 } from "@/lib/billboard-ads";
 import { formatNaira } from "@/lib/format";
 
-
 type Point = { x: number; y: number };
 type Home = Point & { floors: number; roof: string };
 type Building = {
@@ -647,13 +646,14 @@ function InstancedNeighborhood() {
   );
 }
 
+// 👇 PERF FIX: Removed castShadow from the trees to significantly improve FPS
 function TreeModel({ position, scale = 1 }: { position: [number, number, number]; scale?: number }) {
   return (
     <group position={position} scale={scale}>
-      <mesh position={[0, 10, 0]} castShadow><cylinderGeometry args={[2.8, 4, 20, 7]} /><meshStandardMaterial color="#76563e" /></mesh>
-      <mesh position={[0, 25, 0]} castShadow><icosahedronGeometry args={[14, 1]} /><meshStandardMaterial color="#286c43" roughness={0.94} /></mesh>
-      <mesh position={[-7, 31, 2]} castShadow><icosahedronGeometry args={[9, 1]} /><meshStandardMaterial color="#35844d" roughness={0.94} /></mesh>
-      <mesh position={[7, 34, -2]} castShadow><icosahedronGeometry args={[8, 1]} /><meshStandardMaterial color="#4a9252" roughness={0.94} /></mesh>
+      <mesh position={[0, 10, 0]}><cylinderGeometry args={[2.8, 4, 20, 7]} /><meshStandardMaterial color="#76563e" /></mesh>
+      <mesh position={[0, 25, 0]}><icosahedronGeometry args={[14, 1]} /><meshStandardMaterial color="#286c43" roughness={0.94} /></mesh>
+      <mesh position={[-7, 31, 2]}><icosahedronGeometry args={[9, 1]} /><meshStandardMaterial color="#35844d" roughness={0.94} /></mesh>
+      <mesh position={[7, 34, -2]}><icosahedronGeometry args={[8, 1]} /><meshStandardMaterial color="#4a9252" roughness={0.94} /></mesh>
     </group>
   );
 }
@@ -1307,6 +1307,7 @@ function Billboard({
 }) {
   const boardAds = ads.filter((ad) => ad.boardId === board.id);
   const [adIndex, setAdIndex] = useState(0);
+  
   useEffect(() => {
     if (boardAds.length < 2) return;
     const timer = window.setInterval(() => {
@@ -1314,17 +1315,52 @@ function Billboard({
     }, 8000);
     return () => window.clearInterval(timer);
   }, [boardAds.length, board.id]);
+
   const activeAd = boardAds[adIndex % Math.max(boardAds.length, 1)];
   const [x, , z] = worldPosition(board.x + board.width / 2, board.y + 50);
+  const [hovered, setHovered] = useState(false);
+
   return (
     <group position={[x, 0, z]} rotation={[0, -0.16, 0]}>
-      {[-0.3, 0.3].map((ratio) => <mesh key={ratio} position={[board.width * ratio, 42, 0]} castShadow><boxGeometry args={[6, 84, 6]} /><meshStandardMaterial color="#303a3a" /></mesh>)}
-      <mesh position={[0, 96, 0]} castShadow><boxGeometry args={[board.width, 104, 9]} /><meshStandardMaterial color="#202c2d" /></mesh>
-      <mesh position={[0, 97, 5]}><boxGeometry args={[board.width - 14, 88, 2]} /><meshStandardMaterial color={activeAd ? "#111" : board.color} roughness={0.64} /></mesh>
+      {[-0.3, 0.3].map((ratio) => (
+        <mesh key={ratio} position={[board.width * ratio, 42, 0]} castShadow>
+          <boxGeometry args={[6, 84, 6]} />
+          <meshStandardMaterial color="#303a3a" />
+        </mesh>
+      ))}
+      
+      <mesh position={[0, 96, 0]} castShadow>
+        <boxGeometry args={[board.width, 104, 9]} />
+        <meshStandardMaterial color="#202c2d" />
+      </mesh>
+      
+      <mesh position={[0, 97, 5]}>
+        <boxGeometry args={[board.width - 14, 88, 2]} />
+        <meshStandardMaterial color={activeAd ? "#111" : board.color} roughness={0.64} />
+      </mesh>
+
+      {/* 👇 THE 3D CLICK FALLBACK: Invisible plane that makes the whole board clickable */}
+      <mesh 
+        position={[0, 97, 6.5]} 
+        onPointerEnter={() => setHovered(true)}
+        onPointerLeave={() => setHovered(false)}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect(board);
+        }}
+        style={{ cursor: "pointer" }}
+      >
+        <planeGeometry args={[board.width - 14, 88]} />
+        <meshBasicMaterial transparent opacity={0} />
+      </mesh>
+      
+      {/* 👇 THE VISIBLE HTML: Made larger and responsive */}
       <Html transform position={[0, 96, 6.5]} center zIndexRange={[100, 0]} pointerEvents="auto">
         <button
           type="button"
           aria-label={`Post an ad on billboard ${board.id.replace("billboard-", "")}`}
+          onPointerEnter={() => setHovered(true)}
+          onPointerLeave={() => setHovered(false)}
           onClick={(event) => {
             event.stopPropagation();
             onSelect(board);
@@ -1332,12 +1368,15 @@ function Billboard({
           style={{
             position: "relative",
             display: "flex",
-            width: `${board.width}px`,
+            flexDirection: "column",
+            // Keep the CSS fixed, the HTML transform scales it in 3D
+            width: "240px", 
             height: "104px",
             alignItems: "center",
             justifyContent: "center",
             overflow: "hidden",
-            border: 0,
+            border: hovered ? "4px solid #20b978" : "0px solid transparent", // 👈 Add a glow effect on hover
+            borderRadius: "4px",
             padding: 0,
             background: activeAd ? "#111" : board.color,
             color: "white",
@@ -1346,6 +1385,7 @@ function Billboard({
             textAlign: "center",
             textShadow: "0 2px 3px rgba(0,0,0,.45)",
             whiteSpace: "nowrap",
+            transition: "border 0.2s",
           }}
         >
           {activeAd?.adType === "video" ? (
@@ -1362,33 +1402,48 @@ function Billboard({
             // eslint-disable-next-line @next/next/no-img-element
             <img key={activeAd.id} src={activeAd.mediaUrl} alt="Paid billboard advertisement" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
           ) : (
-            <span style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", padding: "6px 8px", boxSizing: "border-box" }}>
+            <span style={{ 
+              display: "flex", 
+              flexDirection: "column", 
+              alignItems: "center", 
+              justifyContent: "center", 
+              width: "100%", 
+              height: "100%", 
+              paddingBottom: "16px", 
+              boxSizing: "border-box" 
+            }}>
               <span style={{
                 display: "block",
-                fontSize: `${Math.min(board.width, 104) * 0.22}px`,
+                fontSize: "42px", // 👈 Made bigger
                 fontWeight: 900,
                 letterSpacing: "0.06em",
-                lineHeight: 1.05,
-                maxWidth: "100%",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
+                lineHeight: 1,
                 whiteSpace: "nowrap",
               }}>{board.title}</span>
               <span style={{
                 display: "block",
                 marginTop: "4px",
-                fontSize: `${Math.min(board.width, 104) * 0.12}px`,
+                fontSize: "18px", // 👈 Made bigger
                 fontWeight: 800,
                 letterSpacing: "0.08em",
-                lineHeight: 1.1,
-                maxWidth: "100%",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
+                lineHeight: 1,
                 whiteSpace: "nowrap",
               }}>{board.subtitle}</span>
             </span>
           )}
-          <span style={{ position: "absolute", bottom: "3px", left: "50%", transform: "translateX(-50%)", borderRadius: "999px", background: "rgba(10,18,20,.78)", padding: "2px 7px", fontSize: "50px", fontWeight: 800, letterSpacing: ".03em", textShadow: "none" }}>
+          <span style={{ 
+            position: "absolute", 
+            bottom: "3px", 
+            left: "50%", 
+            transform: "translateX(-50%)", 
+            borderRadius: "999px", 
+            background: "rgba(10,18,20,.78)", 
+            padding: "2px 7px", 
+            fontSize: "9px", 
+            fontWeight: 800, 
+            letterSpacing: ".03em", 
+            textShadow: "none" 
+          }}>
             {board.width < 220
               ? "Tap to advertise"
               : `Tap to advertise · ${formatNaira(BILLBOARD_PRICES.image)} image / ${formatNaira(BILLBOARD_PRICES.video)} video`}
@@ -2740,24 +2795,32 @@ export default function OsogboScene({
             typeof ad.id === "string" &&
             "boardId" in ad &&
             typeof ad.boardId === "string" &&
-            isBillboardId(ad.boardId) &&
+            ad.boardId.startsWith("billboard-") &&
             "adType" in ad &&
             (ad.adType === "image" || ad.adType === "video") &&
             "mediaUrl" in ad &&
             typeof ad.mediaUrl === "string",
         );
         if (active) setBillboardAds(validAds);
+        
+        // If payment just succeeded, we can auto-dismiss the pending banner
+        // Note: We'll handle the banner logic below!
       } catch (error) {
         console.error("[OsogboScene] Could not load billboard ads:", error);
       }
     };
+    
     void loadAds();
-    const refresh = window.setInterval(() => void loadAds(), 60_000);
+    
+    // 👇 THE FIX: Poll every 3 seconds if payment is pending, otherwise every 60 seconds
+    const interval = paymentStatus === "pending" ? 3_000 : 60_000;
+    const refresh = window.setInterval(() => void loadAds(), interval);
+    
     return () => {
       active = false;
       window.clearInterval(refresh);
     };
-  }, []);
+  }, [paymentStatus]); // 👈 Added paymentStatus as a dependency
 
   const paymentNotice = paymentStatus === "success"
     ? "Payment confirmed — your ad is now live for 7 days."
@@ -2857,9 +2920,9 @@ export default function OsogboScene({
         <Canvas
           shadows
           style={{ width: "100%", height: "100%" }}
-          dpr={[1, 1.5]}
+          dpr={[1, 1]} // 👈 PERF FIX: Lower resolution cap for speed
           camera={{ position: [0, 2450, 2350], rotation: [-Math.PI / 4, 0, 0], fov: 45, near: 1, far: 12000 }}
-          gl={{ antialias: true, alpha: false }}
+          gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }} // 👈 PERF FIX: Force GPU priority
           onCreated={({ gl }) => {
             gl.setClearColor("#4babc0");
             gl.shadowMap.type = THREE.PCFShadowMap;
@@ -2915,7 +2978,26 @@ export default function OsogboScene({
             {paymentNotice}
             {paymentReference && <span className="mt-1 block break-all text-xs font-normal text-white/65">Reference: {paymentReference}</span>}
           </span>
-          <button type="button" onClick={dismissPaymentNotice} aria-label="Dismiss payment message" className="shrink-0 rounded-full bg-white/10 px-2 py-1 text-xs">Close</button>
+          <div className="flex flex-col gap-2 shrink-0">
+            {/* 👇 Add a manual refresh button if pending */}
+            {paymentStatus === "pending" && (
+              <button 
+                type="button" 
+                onClick={() => window.location.reload()} 
+                className="rounded-full bg-[#20b978] px-3 py-1 text-xs font-bold text-white shadow hover:bg-[#199c63] transition"
+              >
+                Check Status
+              </button>
+            )}
+            <button 
+              type="button" 
+              onClick={dismissPaymentNotice} 
+              aria-label="Dismiss payment message" 
+              className="rounded-full bg-white/10 px-3 py-1 text-xs hover:bg-white/20 transition"
+            >
+              Close
+            </button>
+          </div>
         </div>
       )}
     </>
