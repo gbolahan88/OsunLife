@@ -1,6 +1,6 @@
 "use client";
 
-import { Html, OrbitControls, MapControls } from "@react-three/drei";
+import { Html, MapControls } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore, type MutableRefObject } from "react";
 import * as THREE from "three";
@@ -9,11 +9,10 @@ import { getGameClock } from "@/lib/time";
 import { useNow } from "@/hooks/useNow";
 import { useGameStore } from "@/store/gameStore";
 import { RideVehicle, type RideMode } from "@/components/game/RideVehicles";
-import RideBar from "@/components/RideBar";
+import RideBar from "@/components/RideBar"
 import {
   CharacterAppearance,
   DEFAULT_CHARACTER_APPEARANCE,
-  buildAvatarUrl,
 } from "@/store/characterAppearance";
 import CharacterModel from "@/components/game/CharacterModel";
 import BuildingSheet from "@/components/BuildingSheet";
@@ -22,7 +21,6 @@ import { TRANSPORT_MODES, type TransportId } from "@/lib/buildingInfo";
 import { MAP_TASKS, MAP_TASK_COOLDOWN_MS } from "@/lib/mapTasks";
 import {
   BILLBOARD_PRICES,
-  isBillboardId,
   type BillboardAd,
   type BillboardId,
 } from "@/lib/billboard-ads";
@@ -77,6 +75,7 @@ const MAP_CAMERA_DIRECTION = new THREE.Vector3(
   Math.cos(MAP_CAMERA_POLAR_ANGLE),
   Math.sin(MAP_CAMERA_POLAR_ANGLE),
 );
+
 const MAP_CAMERA_MAX_DISTANCE = 12000;
 
 const UPPER_ROAD_TILT = -0.035;
@@ -534,12 +533,12 @@ function Road({
         <boxGeometry args={[length, 4, width]} /><meshStandardMaterial map={asphalt} roughness={0.94} />
       </mesh>
       {[-1, 1].map((side) => (
-        <mesh key={side} position={[0, 4.16, side * 2.2]}>
+        <mesh key={side} position={[0, 4.3, side * 2.2]}>
           <boxGeometry args={[length - 18, 0.32, 1.6]} /><meshStandardMaterial color="#e0b94f" roughness={0.72} />
         </mesh>
       ))}
       {Array.from({ length: dashCount }, (_, index) => (
-        <mesh key={`dash-${index}`} position={[index * 120 - length / 2 + 85, 4.14, 0]}>
+        <mesh key={`dash-${index}`} position={[index * 120 - length / 2 + 85, 4.3, 0]}>
           <boxGeometry args={[48, 0.28, 1.2]} /><meshStandardMaterial color="#e7e2d0" roughness={0.75} />
         </mesh>
       ))}
@@ -1299,6 +1298,7 @@ function RiverBridge({ position, rotation }: {
 
 function BillboardImage({ url, width, height }: { url: string; width: number; height: number }) {
   const texture = useTexture(url);
+  
   return (
     <mesh position={[0, 97, 6.1]}>
       <planeGeometry args={[width, height]} />
@@ -1348,7 +1348,7 @@ function Billboard({
       </mesh>
       
       {/* Background Color Plane */}
-      <mesh position={[0, 97, 5]}>
+      <mesh position={[0, 97, 4]}>
         <boxGeometry args={[board.width - 14, 88, 2]} />
         <meshStandardMaterial color={activeAd ? "#111" : board.color} roughness={0.64} />
       </mesh>
@@ -1364,7 +1364,7 @@ function Billboard({
 
       {/* 👇 Render 3D Video only if a video ad is active */}
       {activeAd && activeAd.adType === "video" && (
-        <mesh position={[0, 97, 6.1]}>
+        <mesh position={[0, 97, 7]}>
           <planeGeometry args={[board.width - 14, 88]} />
           <meshBasicMaterial toneMapped={false}>
             
@@ -2586,8 +2586,8 @@ function Scene({ active, interactive, hour, appearance, selectedId, travel, trip
         enablePan={!riding}        // Dragging would fight the ride camera
         enableZoom={true}          // Allows zooming in/out
         screenSpacePanning={true}  // Makes the drag follow your mouse perfectly
-        minDistance={400}
-        maxDistance={3500}
+        minDistance={1000}
+        maxDistance={2800}
         minPolarAngle={Math.PI / 3.5}
         maxPolarAngle={Math.PI / 3.5}
         target={[0, 0, 0]}
@@ -2605,10 +2605,10 @@ function Scene({ active, interactive, hour, appearance, selectedId, travel, trip
       <mesh geometry={cliffGeometry} receiveShadow castShadow>
         <meshStandardMaterial color="#88765b" roughness={1} side={THREE.DoubleSide} />
       </mesh>
-      <mesh geometry={beachGeometry} rotation={[-Math.PI / 2, 0, 0]} position={[0, -2.4, 0]} receiveShadow>
+      <mesh geometry={beachGeometry} rotation={[-Math.PI / 2, 0, 0]} position={[0, -3, 0]} receiveShadow>
         <meshStandardMaterial color="#d6c18e" roughness={1} />
       </mesh>
-      <mesh geometry={islandGeometry} rotation={[-Math.PI / 2, 0, 0]} position={[0, -2, 0]} receiveShadow>
+      <mesh geometry={islandGeometry} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]} receiveShadow>
         <meshStandardMaterial map={grassTexture} roughness={1} />
       </mesh>
       <InstancedNeighborhood />

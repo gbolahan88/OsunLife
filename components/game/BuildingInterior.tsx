@@ -131,31 +131,11 @@ const INTERIORS: Record<string, InteriorConfig> = {
     wall: "#f0f0f0", 
     accent: "#2d4a5c", 
     fixtures: [
-      // Teller counters at the back
-      { kind: "counter", x: -5, z: -5, color: "#2d4a5c" },
-      { kind: "counter", x: 0, z: -5, color: "#2d4a5c" },
-      { kind: "counter", x: 5, z: -5, color: "#2d4a5c" },
-      
       // Vault door on the right
       { kind: "locker", x: 9, z: -5, color: "#333" },
-
-      // Waiting area (chairs lined up)
-      { kind: "chair", x: -4, z: 1, color: "#2d4a5c", rotation: 0 },
-      { kind: "chair", x: -2, z: 1, color: "#2d4a5c", rotation: 0 },
-      { kind: "chair", x: 2, z: 1, color: "#2d4a5c", rotation: 0 },
-      { kind: "chair", x: 4, z: 1, color: "#2d4a5c", rotation: 0 },
-      
-      // Waiting tables
-      { kind: "table", x: 0, z: 1, color: "#8d6444" },
-
-      // Plants (inside, no trees outside)
-      { kind: "plant", x: -9, z: 5 },
-      { kind: "plant", x: 9, z: 5 },
     ]
   },
   "state-cid": { subtitle: "State CID holding station", floor: "#b9c1c2", wall: "#e5e8e4", accent: "#344b67", fixtures: [
-    { kind: "counter", x: 4, z: -5, color: "#344b67" },
-    { kind: "office-desk", x: 5, z: 1 }, { kind: "chair", x: 5, z: 3 },
   ]},
   "federal-high-court": { subtitle: "Federal High Court", floor: "#b49a73", wall: "#eee4d0", accent: "#82704f", fixtures: [
     { kind: "throne", x: 0, z: -5, color: "#82704f" },
@@ -451,18 +431,23 @@ function LoungeGuests({
     ? ["#d6336c", "#e5b95b", "#a64b70"]
     : ["#2fc4b2", "#d6a23d", "#347b6b"];
 
-  // ✅ Lounge 0: 2 guests, Lounge 1: 1 guest, Lounge 2 & 3: 0 guests
+  // 0 gets 2 guests, 1 gets 1 guest, 2 & 3 get 0 guests
   const guestCount = index === 0 ? 2 : index === 1 ? 1 : 0;
-  if (guestCount === 0) return null;
 
   const guests = [
-    { x: 0, z: 0.7, rot: 0 },      // Front sofa
-    { x: -1.15, z: 0, rot: 0.6 },  // Left chair
+    { x: 0, z: -0.7, rot: 0 },      // Front sofa
+    { x: -0.7, z: -0.7, rot: 0 },  // Left chair
   ];
+
+  // Slice the array based on the guestCount
+  const visibleGuests = guests.slice(0, guestCount);
+
+  // If there are no guests to render, return null (no TypeScript error!)
+  if (visibleGuests.length === 0) return null;
 
   return (
     <group position={position} rotation={[0, rotation, 0]}>
-      {guests.slice(0, guestCount).map((g, i) => (
+      {visibleGuests.map((g, i) => (
         <group key={i} position={[g.x, 0.45, g.z]} rotation={[0, g.rot, 0]}>
           <CharacterModel
             appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: colors[i] }}
@@ -597,6 +582,22 @@ const LOUNGE_BUILDINGS = new Set(["berrymist", "circle-lounge"]);
 const LOUNGE_BAR_MAX_SIZE: [number, number, number] = [4.8, 2.8, 2.8];
 const LOUNGE_SET_MAX_SIZE: [number, number, number] = [7.2, 2.4, 3.6];
 
+const BAR_STOOLS = [
+  { x: -1.5, z: -5.2 }, { x: 0, z: -5.2 }, { x: 1.5, z: -5.2 }
+];
+
+const LOUNGE_SEATS = [
+  // Set 1
+  { x: -5.5, z: 1.5, ry: 1.8 - Math.PI / 2}, { x: -5.5, z: 6.5, ry: Math.PI },
+  // Set 2
+  { x: 5.7, z: 6.5, ry: 1.8 + Math.PI / 2}, { x: 5.7, z: 1.8, ry: 0.8 - Math.PI /2},
+  // Set 3
+  { x: -4.2, z: -4.8, ry: 1.8 - Math.PI / 2}, { x: -7, z: -0.9, ry: Math.PI / 2},
+  // Set 4
+  { x: 4.2, z: -4.8, ry: 1.8 - Math.PI / 2}, { x: 7, z: -0.9, ry: 2.3 + Math.PI / 2},
+];
+
+
 type Box = ObstacleBox;
 
 /** Half-width / half-depth of each fixture, used to stop players walking through furniture. */
@@ -726,7 +727,7 @@ function LocalPlayer({
   sitting: boolean;
   confined: boolean;
   localRef: MutableRefObject<RoomPose>;
-  targetRef: MutableRefObject<{ x: number; z: number } | null>;
+  targetRef: MutableRefObject<{ x: number; z: number; ry?: number } | null>;
 }) {
   const pos = useRef<THREE.Group>(null);
   const rot = useRef<THREE.Group>(null);
@@ -754,6 +755,10 @@ function LocalPlayer({
       if (distance < 0.08) {
         targetRef.current = null;
         stuck.current = 0;
+
+        if (target.ry !== undefined) {
+          facing.current = target.ry;
+        }
       } else {
         const step = Math.min(distance, WALK_SPEED * delta);
         const [resolvedX, resolvedZ] = resolveCircle(
@@ -969,12 +974,12 @@ function DetentionCell() {
     const barPositions = Array.from({ length: 12 }, (_, index) => -3.2 + index * 0.58);
     const sidePositions = Array.from({ length: 8 }, (_, index) => -2 + index * 0.58);
     const inmates = [
-      { name: "Bot 1", position: [-1.25, 0, 0.2] as [number, number, number], shirt: "#b94f45" },
-      { name: "Bot 2", position: [1.25, 0, 0.2] as [number, number, number], shirt: "#527a9a" },
+      { name: "Criminal 1", position: [-1.25, 0, 0.2] as [number, number, number], shirt: "#b94f45" },
+      { name: "Criminal 2", position: [1.25, 0, 0.2] as [number, number, number], shirt: "#527a9a" },
     ];
 
     return (
-      <group position={[-7, 0, -4]}>
+      <group position={[-7, 0, -5.5]}>
         <mesh position={[0, 0, 0]} receiveShadow>
           <boxGeometry args={[7, 0.12, 5]} />
           <meshStandardMaterial color="#77766e" />
@@ -1058,27 +1063,27 @@ function OfferingBox() {
 
 const BUILDING_STAFF: Record<string, Array<{
     name: string;
-    position: [number, number, number];
+    position: [number, number, number, number];
     shirt: string;
-    action: "idle" | "work";
+    action: "idle" | "work" | "sit";
 }>> = {
     bank: [
-      { name: "Amina · Teller", position: [-5, 0, -6.7], shirt: "#28776e", action: "work" },
-      { name: "Tunde · Teller", position: [0, 0, -6.7], shirt: "#355c6c", action: "work" },
-      { name: "Bisi · Teller", position: [5, 0, -6.7], shirt: "#b7793f", action: "work" },
+      { name: "Amina · Teller", position: [-5, 0, -6.7, 0], shirt: "#28776e", action: "work" },
+      { name: "Tunde · Teller", position: [0, 0, -6.7, 0], shirt: "#355c6c", action: "work" },
+      { name: "Bisi · Teller", position: [5, 0, -6.7, 0], shirt: "#b7793f", action: "work" },
     ],
     "state-cid": [
-      { name: "Officer Akande", position: [5.5, 0, -6.5], shirt: "#243c67", action: "idle" },
-      { name: "Desk Sergeant", position: [7.6, 0, 2.5], shirt: "#243c67", action: "work" },
+      { name: "Officer Akande", position: [5.5, 0, -6.5, 0], shirt: "#243c67", action: "idle" },
+      { name: "Desk Sergeant", position: [-9.5, 0.45, 4, Math.PI / 2], shirt: "#243c67", action: "sit" },
     ],
     "federal-high-court": [
-      { name: "Justice Adeyemi", position: [0, 0, -6.7], shirt: "#342f35", action: "idle" },
-      { name: "Counsel A", position: [-8, 0, -5.8], shirt: "#183e63", action: "work" },
-      { name: "Counsel B", position: [8, 0, -5.8], shirt: "#5b3e31", action: "work" },
+      { name: "Justice Adeyemi", position: [0, 0, -6.7, 0], shirt: "#342f35", action: "idle" },
+      { name: "Counsel A", position: [-8, 0, -5.8, 0], shirt: "#183e63", action: "work" },
+      { name: "Counsel B", position: [8, 0, -5.8, 0], shirt: "#5b3e31", action: "work" },
     ],
     church: [
-      { name: "Pastor Olumide", position: [0, 0, -6.8], shirt: "#754536", action: "idle" },
-      { name: "Church Usher", position: [8, 0, -5.5], shirt: "#47765c", action: "idle" },
+      { name: "Pastor Olumide", position: [0, 0, -6.8, 0], shirt: "#754536", action: "idle" },
+      { name: "Church Usher", position: [8, 0, -5.5, 0], shirt: "#47765c", action: "idle" },
     ],
 };
 
@@ -1088,23 +1093,29 @@ function BuildingStaff({ buildingId }: { buildingId: string }) {
 
     return (
       <Suspense fallback={null}>
-        {staff.map((person) => (
-          <group key={person.name} position={person.position}>
-            <CharacterModel
-              appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: person.shirt }}
-              targetHeight={PERSON_HEIGHT}
-              action={person.action}
-            />
-            <NameTag name={person.name} />
-          </group>
-        ))}
+        {staff.map((person) => {
+          const [x, y, z, ry] = person.position;
+
+          return (
+            <group key={person.name} position={[x, y, z]} rotation={[0, ry || 0, 0]}>
+              <CharacterModel
+                appearance={{ ...DEFAULT_CHARACTER_APPEARANCE, shirt: person.shirt }}
+                targetHeight={PERSON_HEIGHT}
+                action={person.action}
+              />
+              <NameTag name={person.name} />
+            </group>
+          );
+        })}
       </Suspense>
     );
 }
 
-const ROOM_SEATS: Record<string, Array<{ x: number; z: number; label: string }>> = {
+const ROOM_SEATS: Record<string, Array<{ x: number; z: number; ry?: number; label: string }>> = {
   bank: [-4, -2, 2, 4].map((x) => ({ x, z: 1, label: "Waiting chair" })),
-  "state-cid": [{ x: -7, z: -5.4, label: "Cell bench" }, { x: 7, z: 4, label: "Waiting chair" }],
+  "state-cid": [
+    { x: -7, z: -5.4, label: "Cell bench" }, 
+    { x: 8.8, z: 4, label: "Waiting chair", ry: -Math.PI / 2 },],
   "federal-high-court": [-6, -2, 2, 6].map((x) => ({ x, z: 3, label: "Court bench" })),
   church: [-6, -2, 2, 6].map((x) => ({ x, z: 0, label: "Church pew" })),
 };
@@ -1145,7 +1156,7 @@ function InteriorScene({
   boxes: Box[];
   dancing: boolean;
   localRef: MutableRefObject<RoomPose>;
-  targetRef: MutableRefObject<{ x: number; z: number } | null>;
+  targetRef: MutableRefObject<{ x: number; z: number; ry?: number } | null>;
   onFloorTap: (x: number, z: number) => void;
 }) {
   const isClub = buildingId === "zeus-club";
@@ -1192,12 +1203,93 @@ function InteriorScene({
 
     {config.fixtures.map((fixture, index) => <FixtureModel key={`${fixture.kind}-${index}`} fixture={fixture} />)}
     {buildingId === "state-cid" && <DetentionCell />}
+    {buildingId === "state-cid" && (
+      <Suspense fallback={null}>
+        {/* Custom Lower Counter */}
+        <group position={[4, 0, -5]}>
+          {/* Lowered the height from 2.2 to 1.4 so characters can see over it */}
+          <mesh position={[0, 0.7, 0]}>
+            <boxGeometry args={[5.5, 1.4, 1.5]} />
+            <meshStandardMaterial color="#344b67" />
+          </mesh>
+          {/* Countertop */}
+          <mesh position={[0, 1.45, 0]}>
+            <boxGeometry args={[5.7, 0.1, 1.7]} />
+            <meshStandardMaterial color="#e0c9a2" />
+          </mesh>
+        </group>
+
+        {/* Custom Office Desk GLB */}
+        {/* Make sure "office-desk.glb" is in your public/models folder! */}
+        <LoungeModel 
+          url="/models/office_desk.glb" 
+          position={[-9, 0, 4]} 
+          rotation={-Math.PI / 25} 
+          maxSize={[4, 2, 3]} 
+        />
+
+        <LoungeModel 
+          url="/models/bench.glb" 
+          position={[9, 0, 4]} 
+          rotation={-Math.PI /2} 
+          maxSize={[4, 2, 2]} 
+        />
+      </Suspense>
+    )}
+    {buildingId === "bank" && (
+      <Suspense fallback={null}>
+        {/* Left Counter */}
+        <group position={[-5, 0, -5]}>
+          <mesh position={[0, 0.7, 0]}>
+            <boxGeometry args={[3, 1.4, 1.5]} />
+            <meshStandardMaterial color="#2d4a5c" />
+          </mesh>
+          <mesh position={[0, 1.45, 0]}>
+            <boxGeometry args={[3.2, 0.1, 1.7]} />
+            <meshStandardMaterial color="#e0c9a2" />
+          </mesh>
+        </group>
+
+        {/* Middle Counter */}
+        <group position={[0, 0, -5]}>
+          <mesh position={[0, 0.7, 0]}>
+            <boxGeometry args={[3, 1.4, 1.5]} />
+            <meshStandardMaterial color="#2d4a5c" />
+          </mesh>
+          <mesh position={[0, 1.45, 0]}>
+            <boxGeometry args={[3.2, 0.1, 1.7]} />
+            <meshStandardMaterial color="#e0c9a2" />
+          </mesh>
+        </group>
+
+        {/* Right Counter */}
+        <group position={[5, 0, -5]}>
+          <mesh position={[0, 0.7, 0]}>
+            <boxGeometry args={[3, 1.4, 1.5]} />
+            <meshStandardMaterial color="#2d4a5c" />
+          </mesh>
+          <mesh position={[0, 1.45, 0]}>
+            <boxGeometry args={[3.2, 0.1, 1.7]} />
+            <meshStandardMaterial color="#e0c9a2" />
+          </mesh>
+        </group>
+
+        {/* Bank Bench */}
+        <LoungeModel 
+          url="/models/bench.glb" 
+          position={[0, 0, 2]} 
+          rotation={0} // 0 means facing the camera (towards the counters)
+          maxSize={[6, 2, 2]} 
+        />
+      </Suspense>
+    )}
     {buildingId === "church" && <OfferingBox />}
     <BuildingStaff buildingId={buildingId} />
     {(ROOM_SEATS[buildingId] ?? []).map((seat) => (
       <mesh
         key={`${seat.label}-${seat.x}-${seat.z}`}
         position={[seat.x, 0.8, seat.z]}
+        rotation={[0, seat.ry || 0, 0]}
         onClick={(event) => {
           event.stopPropagation();
           onSeatAt([seat.x, seat.z + 1], "sit");
@@ -1220,44 +1312,22 @@ function InteriorScene({
           { pos: [6, 0, -3] as [number, number, number], rot: -0.9 },
         ].map((set, i) => (
           <group key={i}>
-            {/* ✅ Increased maxSize from 3.2x1.4x1.8 to 6x3x4 so it's double the size */}
             <LoungeModel
               url="/models/lounge.glb"
               position={set.pos}
               rotation={set.rot}
               maxSize={[7, 3, 4]}
             />
+            {/* <mesh position={[5.7, 1, 6.5]}> 
+              <boxGeometry args={[1, 1, 1]} />
+              <meshBasicMaterial color="red" />
+            </mesh> */}
             <LoungeGuests
               buildingId={buildingId}
               position={set.pos}
               rotation={set.rot}
               index={i}
             />
-
-            {/* Click zones */}
-            <group position={set.pos} rotation={[0, set.rot, 0]}>
-              <mesh
-                position={[0, 0.5, 0.7]}
-                onClick={(e) => { e.stopPropagation(); onSeatAt([set.pos[0], set.pos[2] + 0.7], "sit"); }}
-              >
-                <boxGeometry args={[2.4, 1, 1.6]} />
-                <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-              </mesh>
-              <mesh
-                position={[-1.15, 0.5, 0]}
-                onClick={(e) => { e.stopPropagation(); onSeatAt([set.pos[0] - 1.15, set.pos[2]], "sit"); }}
-              >
-                <boxGeometry args={[1.2, 1, 1.2]} />
-                <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-              </mesh>
-              <mesh
-                position={[1.15, 0.5, 0]}
-                onClick={(e) => { e.stopPropagation(); onSeatAt([set.pos[0] + 1.15, set.pos[2]], "sit"); }}
-              >
-                <boxGeometry args={[1.2, 1, 1.2]} />
-                <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-              </mesh>
-            </group>
           </group>
         ))}
       </Suspense>
@@ -1321,9 +1391,10 @@ export default function BuildingInterior({
   const [dancing, setDancing] = useState(false);
   const [sitting, setSitting] = useState(false);
   const [bubbles, setBubbles] = useState<Record<string, string>>({});
+  const [spotNotice, setSpotNotice] = useState<string | null>(null);
   const bubbleTimers = useRef(new Map<string, number>());
   const localRef = useRef<RoomPose>({ x: SPAWN_X, z: SPAWN_Z, ry: 0, action: "idle" });
-  const targetRef = useRef<{ x: number; z: number } | null>(null);
+  const targetRef = useRef<{ x: number; z: number; ry?: number } | null>(null);
   const boxes = useMemo(() => buildObstacles(buildingId, config.fixtures), [buildingId, config]);
 
   const fx = useVenueFx(buildingName);
@@ -1417,8 +1488,8 @@ export default function BuildingInterior({
     setSitting(false);
   }, []);
 
-  const handleSeatAt = useCallback((pos: [number, number], action: "sit" | "idle") => {
-    targetRef.current = { x: pos[0], z: pos[1] };
+  const handleSeatAt = useCallback((pos: [number, number], action: "sit" | "idle", ry?: number) => {
+    targetRef.current = { x: pos[0], z: pos[1], ry };
     setDancing(false);
     setSitting(action === "sit");
   }, []);
@@ -1485,10 +1556,44 @@ export default function BuildingInterior({
   );
 
   const handleSpot = useCallback((spot: VenueSpot) => {
-    targetRef.current = { x: spot.x, z: spot.z };
-    setDancing(false);
-    setSitting(false);
-  }, []);
+    const allPlayers = [...here, { userId }];
+    
+    const isOccupied = (sx: number, sz: number) => {
+      return allPlayers.some((p) => {
+        const pose = p.userId === userId ? localRef.current : remote.current.get(p.userId);
+        if (!pose) return false;
+        return Math.hypot(pose.x - sx, pose.z - sz) < 1.5 && pose.action === "sit";
+      });
+    };
+
+    if (spot.label === "Bar") {
+      const freeStool = BAR_STOOLS.find((s) => !isOccupied(s.x, s.z));
+      if (!freeStool) {
+        setSpotNotice("All bar stools are taken!");
+        setTimeout(() => setSpotNotice(null), 3000);
+        return;
+      }
+      targetRef.current = { x: freeStool.x, z: freeStool.z };
+      setDancing(false);
+      setSitting(true);
+    } 
+    else if (spot.label === "Lounge seat") {
+      const freeSeat = LOUNGE_SEATS.find((s) => !isOccupied(s.x, s.z));
+      if (!freeSeat) {
+        setSpotNotice("All lounge seats are taken!");
+        setTimeout(() => setSpotNotice(null), 3000);
+        return;
+      }
+      handleSeatAt([freeSeat.x, freeSeat.z], "sit", freeSeat.ry);  
+      setDancing(false);
+      setSitting(true);
+    } 
+    else {
+      targetRef.current = { x: spot.x, z: spot.z };
+      setDancing(false);
+      setSitting(false);
+    }
+  }, [here, userId, remote, localRef]);
 
   function chatWith(player: RemotePlayer) {
     openThread({ userId: player.userId, username: player.username });
@@ -1522,6 +1627,12 @@ export default function BuildingInterior({
 
     {venue && <VenueFxLayer fx={fx} />}
     {venue && <MoneyDropsLayer drops={drops} />}
+
+    {spotNotice && (
+      <div className="pointer-events-none absolute bottom-36 left-1/2 z-50 -translate-x-1/2 rounded-full bg-black/80 px-4 py-2 text-sm font-bold text-white shadow-lg backdrop-blur">
+        {spotNotice}
+      </div>
+    )}
 
     <div className="pointer-events-none absolute inset-0">
       <div className="pointer-events-auto absolute left-3 top-[calc(env(safe-area-inset-top)+7rem)] flex max-w-[calc(100%-1.5rem)] items-center gap-2 sm:left-4">
@@ -1779,7 +1890,7 @@ export default function BuildingInterior({
                   const seat = buildingId === "state-cid" && crimeState.status === "station"
                     ? ROOM_SEATS["state-cid"][0]
                     : ROOM_SEATS[buildingId]?.find((entry) => entry.label !== "Cell bench");
-                  if (seat) handleSeatAt([seat.x, seat.z + 1], "sit");
+                  if (seat) handleSeatAt([seat.x, seat.z], "sit", seat.ry);
                 }}
                 className="w-full rounded-full border border-white/10 bg-white/5 px-4 py-2.5 text-xs font-bold text-white/85 hover:bg-white/10 disabled:opacity-40"
               >
