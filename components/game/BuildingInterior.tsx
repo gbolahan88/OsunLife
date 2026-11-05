@@ -1199,7 +1199,7 @@ function InteriorScene({
         <mesh position={[11.3, 2.4, 0]} receiveShadow><boxGeometry args={[.35, 5, 17]} /><meshStandardMaterial color={config.wall} roughness={.9} /></mesh>
         <mesh position={[0, 4.85, -8.1]}><boxGeometry args={[22.5, .15, .25]} /><meshStandardMaterial color={config.accent} /></mesh>
       </>
-    )}
+    )} 
 
     {config.fixtures.map((fixture, index) => <FixtureModel key={`${fixture.kind}-${index}`} fixture={fixture} />)}
     {buildingId === "state-cid" && <DetentionCell />}
