@@ -27,6 +27,7 @@ import {
   type BillboardId,
 } from "@/lib/billboard-ads";
 import { formatNaira } from "@/lib/format";
+import { useTexture } from "@react-three/drei";
 
 type Point = { x: number; y: number };
 type Home = Point & { floors: number; roof: string };
@@ -1296,6 +1297,16 @@ function RiverBridge({ position, rotation }: {
   );
 }
 
+function BillboardImage({ url, width, height }: { url: string; width: number; height: number }) {
+  const texture = useTexture(url);
+  return (
+    <mesh position={[0, 97, 6.1]}>
+      <planeGeometry args={[width, height]} />
+      <meshBasicMaterial map={texture} toneMapped={false} />
+    </mesh>
+  );
+}
+
 function Billboard({
   board,
   ads,
@@ -1322,6 +1333,7 @@ function Billboard({
 
   return (
     <group position={[x, 0, z]} rotation={[0, -0.16, 0]}>
+      {/* Legs */}
       {[-0.3, 0.3].map((ratio) => (
         <mesh key={ratio} position={[board.width * ratio, 42, 0]} castShadow>
           <boxGeometry args={[6, 84, 6]} />
@@ -1329,17 +1341,39 @@ function Billboard({
         </mesh>
       ))}
       
+      {/* Black frame */}
       <mesh position={[0, 96, 0]} castShadow>
         <boxGeometry args={[board.width, 104, 9]} />
         <meshStandardMaterial color="#202c2d" />
       </mesh>
       
+      {/* Background Color Plane */}
       <mesh position={[0, 97, 5]}>
         <boxGeometry args={[board.width - 14, 88, 2]} />
         <meshStandardMaterial color={activeAd ? "#111" : board.color} roughness={0.64} />
       </mesh>
 
-      {/* 👇 THE 3D CLICK FALLBACK: Invisible plane that makes the whole board clickable */}
+      {/* 👇 Render 3D Image only if an image ad is active */}
+      {activeAd && activeAd.adType === "image" && (
+        <BillboardImage 
+          url={activeAd.mediaUrl} 
+          width={board.width - 14} 
+          height={88} 
+        />
+      )}
+
+      {/* 👇 Render 3D Video only if a video ad is active */}
+      {activeAd && activeAd.adType === "video" && (
+        <mesh position={[0, 97, 6.1]}>
+          <planeGeometry args={[board.width - 14, 88]} />
+          <meshBasicMaterial toneMapped={false}>
+            
+            <videoTexture attach="map" args={[document.createElement("video")]} />
+          </meshBasicMaterial>
+        </mesh>
+      )}
+
+      {/* 👇 3D CLICK FALLBACK (Makes it clickable even when zoomed out) */}
       <mesh 
         position={[0, 97, 6.5]} 
         onPointerEnter={() => setHovered(true)}
@@ -1353,102 +1387,47 @@ function Billboard({
         <meshBasicMaterial transparent opacity={0} />
       </mesh>
       
-      {/* 👇 THE VISIBLE HTML: Made larger and responsive */}
-      <Html transform position={[0, 96, 6.5]} center zIndexRange={[100, 0]} pointerEvents="auto">
-        <button
-          type="button"
-          aria-label={`Post an ad on billboard ${board.id.replace("billboard-", "")}`}
-          onPointerEnter={() => setHovered(true)}
-          onPointerLeave={() => setHovered(false)}
-          onClick={(event) => {
-            event.stopPropagation();
-            onSelect(board);
-          }}
-          style={{
-            position: "relative",
-            display: "flex",
-            flexDirection: "column",
-            // Keep the CSS fixed, the HTML transform scales it in 3D
-            width: "240px", 
-            height: "104px",
-            alignItems: "center",
-            justifyContent: "center",
-            overflow: "hidden",
-            border: hovered ? "4px solid #20b978" : "0px solid transparent", // 👈 Add a glow effect on hover
-            borderRadius: "4px",
-            padding: 0,
-            background: activeAd ? "#111" : board.color,
-            color: "white",
-            cursor: "pointer",
-            fontFamily: "Arial, sans-serif",
-            textAlign: "center",
-            textShadow: "0 2px 3px rgba(0,0,0,.45)",
-            whiteSpace: "nowrap",
-            transition: "border 0.2s",
-          }}
-        >
-          {activeAd?.adType === "video" ? (
-            <video
-              key={activeAd.id}
-              src={activeAd.mediaUrl}
-              autoPlay
-              muted
-              loop
-              playsInline
-              style={{ width: "100%", height: "100%", objectFit: "cover" }}
-            />
-          ) : activeAd ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img key={activeAd.id} src={activeAd.mediaUrl} alt="Paid billboard advertisement" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-          ) : (
-            <span style={{ 
-              display: "flex", 
-              flexDirection: "column", 
-              alignItems: "center", 
-              justifyContent: "center", 
-              width: "100%", 
-              height: "100%", 
-              paddingBottom: "16px", 
-              boxSizing: "border-box" 
-            }}>
-              <span style={{
-                display: "block",
-                fontSize: "42px", // 👈 Made bigger
-                fontWeight: 900,
-                letterSpacing: "0.06em",
-                lineHeight: 1,
-                whiteSpace: "nowrap",
-              }}>{board.title}</span>
-              <span style={{
-                display: "block",
-                marginTop: "4px",
-                fontSize: "18px", // 👈 Made bigger
-                fontWeight: 800,
-                letterSpacing: "0.08em",
-                lineHeight: 1,
-                whiteSpace: "nowrap",
-              }}>{board.subtitle}</span>
+      {/* 👇 HTML FALLBACK (Only shows text if there is NO active ad) */}
+      {!activeAd && (
+        <Html transform position={[0, 96, 6.5]} center zIndexRange={[100, 0]} pointerEvents="auto">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelect(board);
+            }}
+            style={{
+              position: "relative",
+              display: "flex",
+              flexDirection: "column",
+              width: "240px", 
+              height: "104px",
+              alignItems: "center",
+              justifyContent: "center",
+              overflow: "hidden",
+              border: hovered ? "4px solid #20b978" : "0px solid transparent",
+              borderRadius: "4px",
+              padding: 0,
+              background: board.color,
+              color: "white",
+              cursor: "pointer",
+              fontFamily: "Arial, sans-serif",
+              textAlign: "center",
+              textShadow: "0 2px 3px rgba(0,0,0,.45)",
+              whiteSpace: "nowrap",
+              transition: "border 0.2s",
+            }}
+          >
+            <span style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", paddingBottom: "16px", boxSizing: "border-box" }}>
+              <span style={{ fontSize: "42px", fontWeight: 900, letterSpacing: "0.06em", lineHeight: 1 }}>{board.title}</span>
+              <span style={{ marginTop: "4px", fontSize: "18px", fontWeight: 800, letterSpacing: "0.08em", lineHeight: 1 }}>{board.subtitle}</span>
             </span>
-          )}
-          <span style={{ 
-            position: "absolute", 
-            bottom: "3px", 
-            left: "50%", 
-            transform: "translateX(-50%)", 
-            borderRadius: "999px", 
-            background: "rgba(10,18,20,.78)", 
-            padding: "2px 7px", 
-            fontSize: "9px", 
-            fontWeight: 800, 
-            letterSpacing: ".03em", 
-            textShadow: "none" 
-          }}>
-            {board.width < 220
-              ? "Tap to advertise"
-              : `Tap to advertise · ${formatNaira(BILLBOARD_PRICES.image)} image / ${formatNaira(BILLBOARD_PRICES.video)} video`}
-          </span>
-        </button>
-      </Html>
+            <span style={{ position: "absolute", bottom: "3px", left: "50%", transform: "translateX(-50%)", borderRadius: "999px", background: "rgba(10,18,20,.78)", padding: "2px 7px", fontSize: "9px", fontWeight: 800, letterSpacing: ".03em", textShadow: "none" }}>
+              {board.width < 220 ? "Tap to advertise" : `Tap to advertise · ${formatNaira(BILLBOARD_PRICES.image)} image / ${formatNaira(BILLBOARD_PRICES.video)} video`}
+            </span>
+          </button>
+        </Html>
+      )}
     </group>
   );
 }
