@@ -27,6 +27,7 @@ import {
 import { formatNaira } from "@/lib/format";
 import { useTexture } from "@react-three/drei";
 import SeaPlotDialog from "@/components/SeaPlotDialog";
+import SeaPlotSizeSelector from "@/components/SeaPlotSizeSelector";
 
 type Point = { x: number; y: number };
 type Home = Point & { floors: number; roof: string };
@@ -59,6 +60,15 @@ type TrafficVehicleProps = {
   start: number;
   lane: number;
   road: "upper" | "lower" | "vertical";
+};
+type SeaPlot = {
+  id: string;
+  plot_id: string;
+  width: number;
+  height: number;
+  mediaUrl: string;
+  link_url: string | null;
+  status: string;
 };
 
 const WORLD_WIDTH = 2400;
@@ -647,7 +657,6 @@ function InstancedNeighborhood() {
   );
 }
 
-// 👇 PERF FIX: Removed castShadow from the trees to significantly improve FPS
 function TreeModel({ position, scale = 1 }: { position: [number, number, number]; scale?: number }) {
   return (
     <group position={position} scale={scale}>
@@ -1624,52 +1633,84 @@ function MotorcycleModel({ color }: { color: string }) {
 function SeaAdImage({ url, width, height }: { url: string; width: number; height: number }) {
   const texture = useTexture(url);
   return (
-    <mesh position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+    <mesh 
+      position={[0, 0.2, 0]} 
+      rotation={[-Math.PI / 2, 0, 0]}
+    >
       <planeGeometry args={[width, height]} />
-      <meshBasicMaterial map={texture} toneMapped={false} />
+      <meshBasicMaterial 
+        map={texture} 
+        toneMapped={false}
+        polygonOffset
+        polygonOffsetFactor={-4}
+      />
     </mesh>
   );
 }
 
-function OceanGrid({ onSelectPlot }: { onSelectPlot: (id: string) => void }) {
+function OceanGrid({ ads, onSelectPlot }: { ads: SeaPlot[], onSelectPlot: (id: string) => void }) {
   const [hovered, setHovered] = useState<string | null>(null);
   const PLOT_SIZE = 40;
   const PLOT_GAP = 4;
   const GRID_COLS = 15;
   const GRID_ROWS = 10;
 
-  // Fake ad to test it
-  const activeAds = [
-    { id: "plot-3-4", col: 3, row: 4, mediaUrl: "https://images.unsplash.com/photo-1542281286-9e0a16bb7366", width: 1, height: 1 },
-  ];
+  // Convert flat DB rows into a dictionary for instant lookup by ID
+  const adMap = useMemo(() => {
+    const map: Record<string, SeaPlot> = {};
+    ads.forEach((ad) => {
+      map[ad.plot_id] = ad;
+    });
+    return map;
+  }, [ads]);
+
+  // Math to center the whole grid
+  const totalWidth = GRID_COLS * (PLOT_SIZE + PLOT_GAP);
+  const totalDepth = GRID_ROWS * (PLOT_SIZE + PLOT_GAP);
+  const offsetX = -totalWidth / 2;
+  const offsetZ = -totalDepth / 2;
 
   return (
-    <group position={[1600, -10, 0]}> 
-      {/* The Blue Grid Lines */}
-      <gridHelper 
-        args={[GRID_COLS * (PLOT_SIZE + PLOT_GAP), GRID_COLS, "#4facfe", "#1e3a8a"]} 
-        position={[0, 0, 0]} 
-      />
+    <group position={[1900, 1.5, -500]}> 
+      
+      {/* 1. The Solid Blue Background */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.1, 0]}>
+        <planeGeometry args={[totalWidth + 20, totalDepth + 20]} />
+        <meshBasicMaterial color="#1e3a8a" transparent opacity={0.4} />
+      </mesh>
 
-      {/* Generate the plots */}
+      {/* 2. The Plot Squares (Empty vs Ad) */}
       {Array.from({ length: GRID_COLS }).map((_, col) =>
         Array.from({ length: GRID_ROWS }).map((_, row) => {
           const plotId = `plot-${col}-${row}`;
-          const ad = activeAds.find((a) => a.id === plotId);
+          const ad = adMap[plotId];
           
-          const x = (col - GRID_COLS / 2) * (PLOT_SIZE + PLOT_GAP);
-          const z = (row - GRID_ROWS / 2) * (PLOT_SIZE + PLOT_GAP);
-          const width = ad ? ad.width * PLOT_SIZE + (ad.width - 1) * PLOT_GAP : PLOT_SIZE;
-          const height = ad ? ad.height * PLOT_SIZE + (ad.height - 1) * PLOT_GAP : PLOT_SIZE;
+          // Position this specific square
+          const x = offsetX + col * (PLOT_SIZE + PLOT_GAP) + PLOT_SIZE / 2;
+          const z = offsetZ + row * (PLOT_SIZE + PLOT_GAP) + PLOT_SIZE / 2;
+
+          const w = ad?.width || 1;
+          const h = ad?.height || 1;
+          
+          // Size the ad to fill the exact plots
+          const width = w * PLOT_SIZE + (w - 1) * PLOT_GAP;
+          const height = h * PLOT_SIZE + (h - 1) * PLOT_GAP;
+
+          // Offset for multi-plot ads to center them over the grids they span
+          const centerX = (w - 1) * (PLOT_SIZE + PLOT_GAP) / 2;
+          const centerZ = (h - 1) * (PLOT_SIZE + PLOT_GAP) / 2;
 
           return (
             <group key={plotId} position={[x, 0, z]}>
               {ad ? (
-                // 👇 Use the safe component instead of raw TextureLoader
-                <SeaAdImage url={ad.mediaUrl} width={width} height={height} />
+                // 👇 Render the image ONLY if there's an ad
+                <group position={[centerX, 0, centerZ]}>
+                  <SeaAdImage url={ad.mediaUrl} width={width} height={height} />
+                </group>
               ) : (
+                // 👇 Render the empty square with hover state
                 <mesh 
-                  position={[0, 0.1, 0]} 
+                  position={[0, 0.05, 0]} 
                   rotation={[-Math.PI / 2, 0, 0]}
                   onPointerEnter={() => setHovered(plotId)}
                   onPointerLeave={() => setHovered(null)}
@@ -1682,7 +1723,8 @@ function OceanGrid({ onSelectPlot }: { onSelectPlot: (id: string) => void }) {
                   <meshBasicMaterial 
                     color={hovered === plotId ? "#60a5fa" : "#1e3a8a"} 
                     transparent 
-                    opacity={hovered === plotId ? 0.8 : 0.3} 
+                    opacity={hovered === plotId ? 0.5 : 0.1} 
+                    side={THREE.DoubleSide}
                   />
                 </mesh>
               )}
@@ -1690,6 +1732,21 @@ function OceanGrid({ onSelectPlot }: { onSelectPlot: (id: string) => void }) {
           );
         })
       )}
+
+      {/* 3. Custom Grid Lines - perfectly aligned with the plots */}
+      {Array.from({ length: GRID_COLS + 1 }).map((_, i) => (
+        <mesh key={`col-${i}`} position={[offsetX + i * (PLOT_SIZE + PLOT_GAP), 0, 0]}>
+          <boxGeometry args={[0.8, 0.1, totalDepth]} />
+          <meshBasicMaterial color="#4facfe" transparent opacity={0.6} />
+        </mesh>
+      ))}
+      {Array.from({ length: GRID_ROWS + 1 }).map((_, i) => (
+        <mesh key={`row-${i}`} position={[0, 0, offsetZ + i * (PLOT_SIZE + PLOT_GAP)]}>
+          <boxGeometry args={[totalWidth, 0.1, 0.8]} />
+          <meshBasicMaterial color="#4facfe" transparent opacity={0.6} />
+        </mesh>
+      ))}
+
     </group>
   );
 }
@@ -2612,7 +2669,8 @@ function FitMapCamera({ active, isMobile }: { active: boolean; isMobile: boolean
   return null;
 }
 
-function Scene({ active, interactive, hour, appearance, selectedId, travel, tripActive, progressRef, onSelectBuilding, onSelectBillboard, billboardAds, onArrive, onSelectPlot }: {
+function Scene({ ads, active, interactive, hour, appearance, selectedId, travel, tripActive, progressRef, onSelectBuilding, onSelectBillboard, billboardAds, onArrive, onSelectPlot }: {
+  ads: SeaPlot[];
   active: boolean;
   interactive: boolean;
   hour: number;
@@ -2678,7 +2736,10 @@ function Scene({ active, interactive, hour, appearance, selectedId, travel, trip
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -48, 0]}>
         <planeGeometry args={[10000, 10000]} /><meshStandardMaterial map={oceanTexture} color="#d2e3e3" roughness={0.42} metalness={0.12} />
       </mesh>
-      <OceanGrid onSelectPlot={(plotId) => onSelectPlot(plotId)} />
+      <OceanGrid 
+        ads={ads}
+        onSelectPlot={onSelectPlot}
+      />
       <mesh geometry={cliffGeometry} receiveShadow castShadow>
         <meshStandardMaterial color="#88765b" roughness={1} side={THREE.DoubleSide} />
       </mesh>
@@ -2802,9 +2863,10 @@ export default function OsogboScene({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [sheetBuilding, setSheetBuilding] = useState<Building | null>(null);
-  const [selectedPlot, setSelectedPlot] = useState<string | null>(null);
+  const [selectedPlot, setSelectedPlot] = useState<{ id: string; width: number; height: number } | null>(null);
   const billboardDialogOpenRef = useRef<(board: BillboardData) => void>(() => {});
   const [billboardAds, setBillboardAds] = useState<BillboardAd[]>([]);
+  const [seaPlots, setSeaPlots] = useState<SeaPlot[]>([]);
   const paymentStatus = useSyncExternalStore(
     subscribeToBillboardPaymentStatus,
     getBillboardPaymentStatus,
@@ -2840,35 +2902,26 @@ export default function OsogboScene({
     const loadAds = async () => {
       try {
         const response = await fetch("/api/billboards", { cache: "no-store" });
-        if (!response.ok) throw new Error(`Billboard ads request failed (${response.status}).`);
-        const result: unknown = await response.json();
-        if (!Array.isArray(result)) throw new Error("Billboard ads response was invalid.");
-        const validAds = result.filter(
-          (ad): ad is BillboardAd =>
-            typeof ad === "object" &&
-            ad !== null &&
-            "id" in ad &&
-            typeof ad.id === "string" &&
-            "boardId" in ad &&
-            typeof ad.boardId === "string" &&
-            ad.boardId.startsWith("billboard-") &&
-            "adType" in ad &&
-            (ad.adType === "image" || ad.adType === "video") &&
-            "mediaUrl" in ad &&
-            typeof ad.mediaUrl === "string",
-        );
-        if (active) setBillboardAds(validAds);
-        
-        // If payment just succeeded, we can auto-dismiss the pending banner
-        // Note: We'll handle the banner logic below!
+        if (!response.ok) throw new Error("Fetch failed");
+        const result = await response.json();
+        if (active) setBillboardAds(result);
       } catch (error) {
-        console.error("[OsogboScene] Could not load billboard ads:", error);
+        console.error("[OsogboScene] Billboard error:", error);
+      }
+
+      // 👇 Fetch Sea Plots
+      try {
+        const plotRes = await fetch("/api/billboards/sea-plots", { cache: "no-store" });
+        if (plotRes.ok) {
+          const plots = await plotRes.json();
+          if (active) setSeaPlots(plots);
+        }
+      } catch (error) {
+        console.error("[OsogboScene] Sea plots error:", error);
       }
     };
     
     void loadAds();
-    
-    // 👇 THE FIX: Poll every 3 seconds if payment is pending, otherwise every 60 seconds
     const interval = paymentStatus === "pending" ? 3_000 : 60_000;
     const refresh = window.setInterval(() => void loadAds(), interval);
     
@@ -2986,6 +3039,7 @@ export default function OsogboScene({
         >
           <CanvasSizer containerRef={containerRef} />
           <Scene
+            ads={seaPlots}
             active={active}
             interactive={interactive}
             hour={hour}
@@ -2998,7 +3052,7 @@ export default function OsogboScene({
             onSelectBillboard={openBillboardDialog}
             billboardAds={billboardAds}
             onArrive={handleArrive}
-            onSelectPlot={setSelectedPlot}
+            onSelectPlot={(id) => setSelectedPlot({ id, width:0, height: 0 })}
           />
         </Canvas>
 
@@ -3029,9 +3083,24 @@ export default function OsogboScene({
         />
       )}
       {active && interactive && <BillboardDialogController openRef={billboardDialogOpenRef} />}
-      {active && interactive && selectedPlot && (
+            {/* 👇 1. First Popup: Size Selection 👇 */}
+      {active && interactive && selectedPlot && selectedPlot.width === 0 && (
+        <SeaPlotSizeSelector
+          plotId={selectedPlot.id}
+          onSelect={(w, h) => {
+            // When they click "Use these plots", update the state to trigger the 2nd popup
+            setSelectedPlot({ id: selectedPlot.id, width: w, height: h });
+          }}
+          onClose={() => setSelectedPlot(null)}
+        />
+      )}
+
+      {/* 👇 2. Second Popup: Upload & Pay 👇 */}
+      {active && interactive && selectedPlot && selectedPlot.width > 0 && (
         <SeaPlotDialog
-          plotId={selectedPlot}
+          plotId={selectedPlot.id}
+          width={selectedPlot.width}
+          height={selectedPlot.height}
           onClose={() => setSelectedPlot(null)}
         />
       )}

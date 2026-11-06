@@ -1,55 +1,64 @@
 "use client";
 
-import { useState } from "react";
-import { X, Minus, Plus } from "lucide-react";
+import { useState, useRef } from "react";
+import { X, ImagePlus } from "lucide-react";
 import { formatNaira } from "@/lib/format";
 
-const BASE_PRICE_NGN = 500; 
-const MAX_SIZE = 3;
+const BASE_PRICE_NGN = 500;
 
 export default function SeaPlotDialog({
   plotId,
+  width,
+  height,
   onClose,
 }: {
   plotId: string;
+  width: number;
+  height: number;
   onClose: () => void;
 }) {
-  const [width, setWidth] = useState(2);
-  const [height, setHeight] = useState(2);
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [brandName, setBrandName] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const totalPlots = width * height;
-  const totalPriceNgn = totalPlots * BASE_PRICE_NGN;
+  const totalPriceNgn = width * height * BASE_PRICE_NGN;
 
-  const adjustWidth = (amount: number) => {
-    setWidth(Math.max(1, Math.min(MAX_SIZE, width + amount)));
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files?.[0];
+    if (selected) {
+      setFile(selected);
+      setPreview(URL.createObjectURL(selected));
+    }
   };
 
-  const adjustHeight = (amount: number) => {
-    setHeight(Math.max(1, Math.min(MAX_SIZE, height + amount)));
-  };
-
-  const handleCheckout = async () => {
+  const handleSubmit = async () => {
+    if (!file) return alert("Please add a picture.");
     setIsSubmitting(true);
+
+    const formData = new FormData();
+    formData.append("plotId", plotId);
+    formData.append("width", width.toString());
+    formData.append("height", height.toString());
+    formData.append("linkUrl", linkUrl);
+    formData.append("file", file);
+
     try {
-      // 👇 Send the data to the secure backend, just like billboards
       const res = await fetch("/api/billboards/initialize-plot", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plotId, width, height }),
+        body: formData,
       });
-
       const data = await res.json();
 
-      if (!res.ok || !data.authorizationUrl) {
-        throw new Error(data.error || "Failed to initialize payment.");
-      }
-
-      // 👇 Redirect to Paystack Secure Checkout
+      if (!res.ok || !data.authorizationUrl) throw new Error(data.error);
+      
+      // Redirect to Paystack
       window.location.href = data.authorizationUrl;
-    } catch (error) {
-      console.error(error);
-      alert("Could not start payment. Please try again.");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to start payment.");
       setIsSubmitting(false);
     }
   };
@@ -76,69 +85,70 @@ export default function SeaPlotDialog({
           </button>
         </div>
 
-        <p className="px-5 pb-4 text-xs text-white/70">
-          Your ad floats on the open water, where every player looks. Tap a spot, then choose its size.
-        </p>
-
-        {/* The Visual Grid Area */}
-        <div className="relative mx-5 mb-4 flex h-48 w-[calc(100%-2.5rem)] items-center justify-center overflow-hidden rounded-2xl bg-[#1e3a8a]">
-          <div className="absolute left-0 top-0 h-full w-1/3 bg-[#84a873]" />
-          <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/grid-me.png')] opacity-20" />
-          
-          <div className="relative z-10 flex flex-col items-center justify-center rounded-md border-2 border-green-400 bg-green-400/20 shadow-[0_0_15px_rgba(74,222,128,0.5)] transition-all duration-200"
-               style={{ width: `${width * 30}px`, height: `${height * 30}px` }}>
-            <span className="text-xs font-bold text-white drop-shadow-md">
-              {width}×{height}
-            </span>
+        <div className="px-5 pb-4 overflow-y-auto scrollbar-hide">
+          {/* Image Upload Area */}
+          <input 
+            type="file" 
+            accept="image/*" 
+            className="hidden" 
+            ref={fileInputRef} 
+            onChange={handleFileChange} 
+          />
+          <div 
+            onClick={() => fileInputRef.current?.click()}
+            className="relative mb-4 flex h-48 w-full cursor-pointer items-center justify-center overflow-hidden rounded-2xl bg-[#35a6d9] hover:bg-[#2d90be] transition"
+          >
+            {preview ? (
+              <img src={preview} alt="Preview" className="h-full w-full object-cover" />
+            ) : (
+              <div className="flex flex-col items-center text-white">
+                <ImagePlus size={32} className="mb-2" />
+                <p className="font-bold">Add your picture</p>
+                <p className="text-xs opacity-80">{width}×{height} plots · logo, flyer or product</p>
+              </div>
+            )}
           </div>
-        </div>
 
-        {/* Size Controls */}
-        <div className="mx-5 mb-5 flex items-center justify-center gap-6 rounded-2xl bg-[#2b3138] p-3">
-          <div className="flex items-center gap-4">
-            <button onClick={() => adjustWidth(-1)} disabled={width <= 1} className="flex h-8 w-8 items-center justify-center rounded-full bg-[#3b424a] hover:bg-[#4b525a] disabled:opacity-50">
-              <Minus size={16} />
-            </button>
-            <div className="text-center">
-              <p className="text-lg font-bold leading-none">{width}</p>
-              <p className="text-[10px] text-white/50">Wide</p>
+          <div className="space-y-4 text-sm">
+            <div>
+              <label className="mb-1 block text-white/70">What are you selling?</label>
+              <input 
+                type="text" 
+                value={brandName}
+                onChange={(e) => setBrandName(e.target.value)}
+                placeholder="e.g. Mama Tee's Small Chops"
+                className="w-full rounded-xl bg-[#2b3138] px-4 py-3 text-white outline-none focus:ring-2 focus:ring-[#1db954]" 
+              />
             </div>
-            <button onClick={() => adjustWidth(1)} disabled={width >= MAX_SIZE} className="flex h-8 w-8 items-center justify-center rounded-full bg-[#3b424a] hover:bg-[#4b525a] disabled:opacity-50">
-              <Plus size={16} />
-            </button>
-          </div>
 
-          <div className="h-8 w-px bg-white/10" />
-
-          <div className="flex items-center gap-4">
-            <button onClick={() => adjustHeight(-1)} disabled={height <= 1} className="flex h-8 w-8 items-center justify-center rounded-full bg-[#3b424a] hover:bg-[#4b525a] disabled:opacity-50">
-              <Minus size={16} />
-            </button>
-            <div className="text-center">
-              <p className="text-lg font-bold leading-none">{height}</p>
-              <p className="text-[10px] text-white/50">Tall</p>
+            <div>
+              <label className="mb-1 block text-white/70">Link</label>
+              <input 
+                type="url" 
+                value={linkUrl}
+                onChange={(e) => setLinkUrl(e.target.value)}
+                placeholder="https://instagram.com/yourbrand"
+                className="w-full rounded-xl bg-[#2b3138] px-4 py-3 text-white outline-none focus:ring-2 focus:ring-[#1db954]" 
+              />
+              <p className="mt-1 text-[10px] text-white/50">
+                Players who tap your plot go here (WhatsApp, Instagram, your site...).
+              </p>
             </div>
-            <button onClick={() => adjustHeight(1)} disabled={height >= MAX_SIZE} className="flex h-8 w-8 items-center justify-center rounded-full bg-[#3b424a] hover:bg-[#4b525a] disabled:opacity-50">
-              <Plus size={16} />
-            </button>
           </div>
         </div>
 
-        {/* Price summary */}
-        <div className="mx-5 mb-5 flex items-center justify-between rounded-xl bg-[#2b3138] px-4 py-3 text-sm font-semibold">
-          <span className="text-white/70">{totalPlots} plots · 7 days</span>
-          <span>{formatNaira(totalPriceNgn)}</span>
-        </div>
-
-        {/* Checkout Button */}
-        <div className="bg-[#14181c] p-5">
+        {/* Footer */}
+        <div className="border-t border-white/10 bg-[#14181c] p-5">
           <button
-            onClick={handleCheckout}
-            disabled={isSubmitting}
-            className="w-full rounded-full bg-[#1db954] py-3.5 text-sm font-bold text-white transition-transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+            onClick={handleSubmit}
+            disabled={isSubmitting || !file}
+            className="w-full rounded-full bg-[#2b3138] py-3.5 text-sm font-bold text-white/50 transition disabled:opacity-50 enabled:bg-[#1db954] enabled:text-white hover:enabled:scale-[1.02]"
           >
             {isSubmitting ? "Processing..." : `Pay ${formatNaira(totalPriceNgn)}`}
           </button>
+          <p className="mt-3 text-center text-[10px] text-white/40">
+            Secure payment by Paystack. Ads that break our rules are taken down without a refund.
+          </p>
         </div>
 
       </div>

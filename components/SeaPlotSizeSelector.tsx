@@ -1,0 +1,90 @@
+"use client";
+
+import { useState } from "react";
+import { X, Minus, Plus } from "lucide-react";
+import { formatNaira } from "@/lib/format";
+
+const BASE_PRICE_NGN = 500;
+const MAX_SIZE = 3;
+
+export default function SeaPlotSizeSelector({
+  plotId,
+  onSelect,
+  onClose,
+}: {
+  plotId: string;
+  onSelect: (width: number, height: number) => void;
+  onClose: () => void;
+}) {
+  const [width, setWidth] = useState(2);
+  const [height, setHeight] = useState(2);
+
+  const totalPlots = width * height;
+  const totalPriceNgn = totalPlots * BASE_PRICE_NGN;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+      <div className="flex w-full max-w-md flex-col overflow-hidden rounded-3xl bg-[#1e2329] text-white shadow-2xl">
+        
+        {/* Header */}
+        <div className="flex items-start justify-between p-5 pb-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#2b3138] text-xl">🏞️</div>
+            <div>
+              <h2 className="text-lg font-extrabold tracking-tight">Sea Plots</h2>
+              <p className="text-xs text-white/60">Rent a patch of Lagos water · ₦500 a plot for 7 days</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="rounded-full p-2 hover:bg-white/10"><X size={20} /></button>
+        </div>
+
+        <p className="px-5 pb-4 text-xs text-white/70">
+          Your ad floats on the open water... Tap a spot, then choose its size.
+        </p>
+
+        {/* Grid Area Visual */}
+        <div className="relative mx-5 mb-4 flex h-48 w-[calc(100%-2.5rem)] items-center justify-center overflow-hidden rounded-2xl bg-[#1e3a8a]">
+          <div className="absolute left-0 top-0 h-full w-1/3 bg-[#84a873]" />
+          <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/grid-me.png')] opacity-20" />
+          
+          <div className="relative z-10 flex flex-col items-center justify-center rounded-md border-2 border-green-400 bg-green-400/20 shadow-[0_0_15px_rgba(74,222,128,0.5)] transition-all duration-200"
+               style={{ width: `${width * 30}px`, height: `${height * 30}px` }}>
+            <span className="text-xs font-bold text-white drop-shadow-md">{width}×{height}</span>
+          </div>
+        </div>
+
+        {/* Size Controls */}
+        <div className="mx-5 mb-5 flex items-center justify-center gap-6 rounded-2xl bg-[#2b3138] p-3">
+          <div className="flex items-center gap-4">
+            <button onClick={() => setWidth(Math.max(1, width - 1))} disabled={width <= 1} className="flex h-8 w-8 items-center justify-center rounded-full bg-[#3b424a] hover:bg-[#4b525a] disabled:opacity-50"><Minus size={16} /></button>
+            <div className="text-center">
+              <p className="text-lg font-bold leading-none">{width}</p>
+              <p className="text-[10px] text-white/50">Wide</p>
+            </div>
+            <button onClick={() => setWidth(Math.min(MAX_SIZE, width + 1))} disabled={width >= MAX_SIZE} className="flex h-8 w-8 items-center justify-center rounded-full bg-[#3b424a] hover:bg-[#4b525a] disabled:opacity-50"><Plus size={16} /></button>
+          </div>
+          <div className="h-8 w-px bg-white/10" />
+          <div className="flex items-center gap-4">
+            <button onClick={() => setHeight(Math.max(1, height - 1))} disabled={height <= 1} className="flex h-8 w-8 items-center justify-center rounded-full bg-[#3b424a] hover:bg-[#4b525a] disabled:opacity-50"><Minus size={16} /></button>
+            <div className="text-center">
+              <p className="text-lg font-bold leading-none">{height}</p>
+              <p className="text-[10px] text-white/50">Tall</p>
+            </div>
+            <button onClick={() => setHeight(Math.min(MAX_SIZE, height + 1))} disabled={height >= MAX_SIZE} className="flex h-8 w-8 items-center justify-center rounded-full bg-[#3b424a] hover:bg-[#4b525a] disabled:opacity-50"><Plus size={16} /></button>
+          </div>
+        </div>
+
+        <div className="mx-5 mb-5 flex items-center justify-between rounded-xl bg-[#2b3138] px-4 py-3 text-sm font-semibold">
+          <span className="text-white/70">{totalPlots} plots · 7 days</span>
+          <span>{formatNaira(totalPriceNgn)}</span>
+        </div>
+
+        <div className="bg-[#14181c] p-5">
+          <button onClick={() => onSelect(width, height)} className="w-full rounded-full bg-[#1db954] py-3.5 text-sm font-bold text-white hover:scale-[1.02]">
+            Use these {totalPlots} plots
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

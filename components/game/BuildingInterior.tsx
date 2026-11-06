@@ -1604,7 +1604,6 @@ export default function BuildingInterior({
     <Canvas shadows dpr={[1, 1.5]} camera={{ position: [0, 10, 19], fov: 48, near: .1, far: 100 }} gl={{ antialias: true }}>
       <OrbitControls makeDefault enablePan={false} enableRotate enableZoom minDistance={12} maxDistance={27} maxPolarAngle={Math.PI / 2.05} target={[0, 1.5, 0]} />
       <InteriorScene
-        key={`${buildingId}-${crimeState?.status ?? "loading"}`}
         config={config}
         buildingId={buildingId}
         detained={buildingId === "state-cid" && crimeState?.status === "station"}

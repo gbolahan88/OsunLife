@@ -36,18 +36,23 @@ export async function POST(request: Request) {
   }
 
   const reference = event.data.reference;
-  if (!/^billboard_[a-f0-9]{32}$/.test(reference)) {
+  // 👇 Accept both billboard_ and sea_plot_ references
+  if (!/^(billboard|sea_plot)_[a-f0-9]{32}$/.test(reference)) {
     return Response.json({ received: true });
   }
 
+  const isSeaPlot = reference.startsWith("sea_plot_");
+  const table = isSeaPlot ? "sea_plots" : "billboard_ads";
+
   const admin = createAdminClient();
   const { data: ad, error: adError } = await admin
-    .from("billboard_ads")
+    .from(table)
     .select("id, amount_kobo, media_path, status")
     .eq("paystack_reference", reference)
     .maybeSingle();
+    
   if (adError) {
-    console.error("[billboards] Webhook ad lookup failed:", adError);
+    console.error(`[payments] Webhook lookup failed in ${table}:`, adError);
     return Response.json({ error: "Could not verify the ad." }, { status: 500 });
   }
   if (!ad || (ad.status !== "pending" && ad.status !== "failed")) {
@@ -62,15 +67,21 @@ export async function POST(request: Request) {
   const payment = (payload as {
     data?: { status?: string; reference?: string; amount?: number; currency?: string };
   } | null)?.data;
+
+  // 👇 For Sea Plots, the amount can be greater than expected (due to Paystack fees)
+  const isAmountValid = isSeaPlot 
+    ? Number(payment?.amount) >= ad.amount_kobo 
+    : Number(payment?.amount) === ad.amount_kobo;
+
   if (
     !response.ok ||
     payment?.status !== "success" ||
     payment.reference !== reference ||
-    Number(payment.amount) !== ad.amount_kobo ||
+    !isAmountValid ||
     typeof payment.currency !== "string" ||
     payment.currency.toUpperCase() !== "NGN"
   ) {
-    console.error("[billboards] Webhook payment verification did not match.", {
+    console.error("[payments] Webhook payment verification did not match.", {
       httpStatus: response.status,
       status: payment?.status,
       referenceMatches: payment?.reference === reference,
@@ -81,14 +92,15 @@ export async function POST(request: Request) {
     return Response.json({ error: "Payment verification failed." }, { status: 400 });
   }
 
-  if (ad.status === "failed") {
+  // 👇 Only check for media file for billboards (sea_plots stores media too, but keep it safe)
+  if (ad.status === "failed" && ad.media_path) {
     const { error: mediaError } = await admin.storage
       .from(BILLBOARD_BUCKET)
       .download(ad.media_path);
     if (mediaError) {
-      console.error("[billboards] Verified payment cannot be recovered because the ad file is missing.", {
+      console.error(`[payments] Verified payment cannot be recovered because the file is missing.`, {
         reference,
-        adId: ad.id,
+        id: ad.id,
         mediaError: mediaError.message,
       });
       return Response.json({ received: true });
@@ -97,12 +109,13 @@ export async function POST(request: Request) {
 
   const expiresAt = new Date(Date.now() + BILLBOARD_AD_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const { error: updateError } = await admin
-    .from("billboard_ads")
+    .from(table)
     .update({ status: "active", expires_at: expiresAt })
     .eq("id", ad.id)
     .eq("status", ad.status);
+
   if (updateError) {
-    console.error("[billboards] Webhook activation failed:", updateError);
+    console.error(`[payments] Webhook activation failed in ${table}:`, updateError);
     return Response.json({ error: "Could not activate the ad." }, { status: 500 });
   }
 
