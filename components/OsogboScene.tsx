@@ -26,6 +26,7 @@ import {
 } from "@/lib/billboard-ads";
 import { formatNaira } from "@/lib/format";
 import { useTexture } from "@react-three/drei";
+import SeaPlotDialog from "@/components/SeaPlotDialog";
 
 type Point = { x: number; y: number };
 type Home = Point & { floors: number; roof: string };
@@ -1620,6 +1621,78 @@ function MotorcycleModel({ color }: { color: string }) {
   );
 }
 
+function SeaAdImage({ url, width, height }: { url: string; width: number; height: number }) {
+  const texture = useTexture(url);
+  return (
+    <mesh position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <planeGeometry args={[width, height]} />
+      <meshBasicMaterial map={texture} toneMapped={false} />
+    </mesh>
+  );
+}
+
+function OceanGrid({ onSelectPlot }: { onSelectPlot: (id: string) => void }) {
+  const [hovered, setHovered] = useState<string | null>(null);
+  const PLOT_SIZE = 40;
+  const PLOT_GAP = 4;
+  const GRID_COLS = 15;
+  const GRID_ROWS = 10;
+
+  // Fake ad to test it
+  const activeAds = [
+    { id: "plot-3-4", col: 3, row: 4, mediaUrl: "https://images.unsplash.com/photo-1542281286-9e0a16bb7366", width: 1, height: 1 },
+  ];
+
+  return (
+    <group position={[1600, -10, 0]}> 
+      {/* The Blue Grid Lines */}
+      <gridHelper 
+        args={[GRID_COLS * (PLOT_SIZE + PLOT_GAP), GRID_COLS, "#4facfe", "#1e3a8a"]} 
+        position={[0, 0, 0]} 
+      />
+
+      {/* Generate the plots */}
+      {Array.from({ length: GRID_COLS }).map((_, col) =>
+        Array.from({ length: GRID_ROWS }).map((_, row) => {
+          const plotId = `plot-${col}-${row}`;
+          const ad = activeAds.find((a) => a.id === plotId);
+          
+          const x = (col - GRID_COLS / 2) * (PLOT_SIZE + PLOT_GAP);
+          const z = (row - GRID_ROWS / 2) * (PLOT_SIZE + PLOT_GAP);
+          const width = ad ? ad.width * PLOT_SIZE + (ad.width - 1) * PLOT_GAP : PLOT_SIZE;
+          const height = ad ? ad.height * PLOT_SIZE + (ad.height - 1) * PLOT_GAP : PLOT_SIZE;
+
+          return (
+            <group key={plotId} position={[x, 0, z]}>
+              {ad ? (
+                // 👇 Use the safe component instead of raw TextureLoader
+                <SeaAdImage url={ad.mediaUrl} width={width} height={height} />
+              ) : (
+                <mesh 
+                  position={[0, 0.1, 0]} 
+                  rotation={[-Math.PI / 2, 0, 0]}
+                  onPointerEnter={() => setHovered(plotId)}
+                  onPointerLeave={() => setHovered(null)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectPlot(plotId); 
+                  }}
+                >
+                  <planeGeometry args={[PLOT_SIZE, PLOT_SIZE]} />
+                  <meshBasicMaterial 
+                    color={hovered === plotId ? "#60a5fa" : "#1e3a8a"} 
+                    transparent 
+                    opacity={hovered === plotId ? 0.8 : 0.3} 
+                  />
+                </mesh>
+              )}
+            </group>
+          );
+        })
+      )}
+    </group>
+  );
+}
 /* -------------------- DETAILED 3D PEOPLE with customization -------------------- */
 
 function PersonModel({
@@ -2528,8 +2601,10 @@ function FitMapCamera({ active, isMobile }: { active: boolean; isMobile: boolean
 
      // ✅ Zoom in on mobile by shrinking the distance
     const zoomFactor = isMobile ? 0.42 : 1; // 0.65 = closer, 0.85 = a bit closer, 0.5 = much closer
+    
+    const finalDistance = THREE.MathUtils.clamp(fitDistance * zoomFactor, 1000, 2800);
 
-    camera.position.copy(MAP_CAMERA_DIRECTION).multiplyScalar(fitDistance * zoomFactor);
+    camera.position.copy(MAP_CAMERA_DIRECTION).multiplyScalar(finalDistance);
     controls.target.set(0, 0, 0);
     controls.update();
   }, [active, camera, controls, width, height, isMobile]);
@@ -2537,7 +2612,7 @@ function FitMapCamera({ active, isMobile }: { active: boolean; isMobile: boolean
   return null;
 }
 
-function Scene({ active, interactive, hour, appearance, selectedId, travel, tripActive, progressRef, onSelectBuilding, onSelectBillboard, billboardAds, onArrive }: {
+function Scene({ active, interactive, hour, appearance, selectedId, travel, tripActive, progressRef, onSelectBuilding, onSelectBillboard, billboardAds, onArrive, onSelectPlot }: {
   active: boolean;
   interactive: boolean;
   hour: number;
@@ -2550,6 +2625,7 @@ function Scene({ active, interactive, hour, appearance, selectedId, travel, trip
   onSelectBillboard: (board: BillboardData) => void;
   billboardAds: BillboardAd[];
   onArrive: (token: number) => void;
+  onSelectPlot: (id: string) => void;
 }) {
   const destination = useMemo<Point>(() => {
     const building = travel ? PLACED_BUILDINGS.find((entry) => entry.id === travel.buildingId) : undefined;
@@ -2602,6 +2678,7 @@ function Scene({ active, interactive, hour, appearance, selectedId, travel, trip
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -48, 0]}>
         <planeGeometry args={[10000, 10000]} /><meshStandardMaterial map={oceanTexture} color="#d2e3e3" roughness={0.42} metalness={0.12} />
       </mesh>
+      <OceanGrid onSelectPlot={(plotId) => onSelectPlot(plotId)} />
       <mesh geometry={cliffGeometry} receiveShadow castShadow>
         <meshStandardMaterial color="#88765b" roughness={1} side={THREE.DoubleSide} />
       </mesh>
@@ -2725,6 +2802,7 @@ export default function OsogboScene({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [sheetBuilding, setSheetBuilding] = useState<Building | null>(null);
+  const [selectedPlot, setSelectedPlot] = useState<string | null>(null);
   const billboardDialogOpenRef = useRef<(board: BillboardData) => void>(() => {});
   const [billboardAds, setBillboardAds] = useState<BillboardAd[]>([]);
   const paymentStatus = useSyncExternalStore(
@@ -2920,6 +2998,7 @@ export default function OsogboScene({
             onSelectBillboard={openBillboardDialog}
             billboardAds={billboardAds}
             onArrive={handleArrive}
+            onSelectPlot={setSelectedPlot}
           />
         </Canvas>
 
@@ -2950,6 +3029,12 @@ export default function OsogboScene({
         />
       )}
       {active && interactive && <BillboardDialogController openRef={billboardDialogOpenRef} />}
+      {active && interactive && selectedPlot && (
+        <SeaPlotDialog
+          plotId={selectedPlot}
+          onClose={() => setSelectedPlot(null)}
+        />
+      )}
       {active && interactive && paymentNotice && (
         <div role="status" className="fixed left-1/2 top-[calc(env(safe-area-inset-top)+1rem)] z-[80] flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 items-start gap-3 rounded-2xl border border-white/10 bg-[#141f2b]/95 px-4 py-3 text-sm font-semibold text-white shadow-xl backdrop-blur">
           <span className="flex-1">
