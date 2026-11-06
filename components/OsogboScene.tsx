@@ -1662,7 +1662,7 @@ function OceanGrid({ ads, onSelectPlot }: { ads: SeaPlot[], onSelectPlot: (id: s
       map[ad.plot_id] = ad;
     });
     return map;
-  }, [ads]);
+  }, [ads]); 
 
   // Math to center the whole grid
   const totalWidth = GRID_COLS * (PLOT_SIZE + PLOT_GAP);
