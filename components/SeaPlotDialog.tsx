@@ -1,44 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { X, Minus, Plus } from "lucide-react";
 import { formatNaira } from "@/lib/format";
 
 const BASE_PRICE_NGN = 500; 
 const MAX_SIZE = 3;
-
-// Declare PaystackPop globally
-// Declare PaystackPop globally with proper types
-type PaystackResponse = {
-  reference: string;
-  status: string;
-  trans: string;
-  transaction: string;
-  message: string;
-};
-
-type PaystackOptions = {
-  key: string;
-  email: string;
-  amount: number;
-  currency: string;
-  ref: string;
-  metadata?: Record<string, unknown>;
-  callback: (response: PaystackResponse) => void;
-  onClose: () => void;
-};
-
-type PaystackHandler = {
-  openIframe: () => void;
-};
-
-declare global {
-  interface Window {
-    PaystackPop: {
-      setup: (options: PaystackOptions) => PaystackHandler;
-    };
-  }
-}
 
 export default function SeaPlotDialog({
   plotId,
@@ -50,23 +17,9 @@ export default function SeaPlotDialog({
   const [width, setWidth] = useState(2);
   const [height, setHeight] = useState(2);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isReady, setIsReady] = useState(false);
 
   const totalPlots = width * height;
   const totalPriceNgn = totalPlots * BASE_PRICE_NGN;
-  const totalPriceUsd = (totalPriceNgn / 1450).toFixed(2);
-
-  // Load Paystack script dynamically
-  useEffect(() => {
-    const script = document.createElement("script");
-    script.src = "https://js.paystack.co/v1/inline.js";
-    script.async = true;
-    script.onload = () => setIsReady(true);
-    document.body.appendChild(script);
-    return () => {
-      document.body.removeChild(script);
-    };
-  }, []);
 
   const adjustWidth = (amount: number) => {
     setWidth(Math.max(1, Math.min(MAX_SIZE, width + amount)));
@@ -76,37 +29,27 @@ export default function SeaPlotDialog({
     setHeight(Math.max(1, Math.min(MAX_SIZE, height + amount)));
   };
 
-  const handleCheckout = () => {
-    if (!isReady) return;
+  const handleCheckout = async () => {
     setIsSubmitting(true);
-
-    const reference = `sea_plot_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-
     try {
-      const handler = window.PaystackPop.setup({
-        key: process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY!,
-        email: "user@example.com", // Replace with the actual logged-in user's email
-        amount: totalPriceNgn * 100, // Paystack expects kobo
-        currency: "NGN",
-        ref: reference,
-        metadata: {
-          plotId,
-          width,
-          height,
-          type: "sea_plot",
-        },
-        callback: function (response: PaystackResponse) {
-          // Paystack redirects here after successful payment
-          // You should verify this on your backend, but for now, we'll redirect to the success page
-          window.location.href = `/?billboardPayment=success&billboardPaymentReference=${response.reference}`;
-        },
-        onClose: function () {
-          setIsSubmitting(false);
-        },
+      // 👇 Send the data to the secure backend, just like billboards
+      const res = await fetch("/api/billboards/initialize-plot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plotId, width, height }),
       });
-      handler.openIframe();
+
+      const data = await res.json();
+
+      if (!res.ok || !data.authorizationUrl) {
+        throw new Error(data.error || "Failed to initialize payment.");
+      }
+
+      // 👇 Redirect to Paystack Secure Checkout
+      window.location.href = data.authorizationUrl;
     } catch (error) {
-      console.error("Paystack error:", error);
+      console.error(error);
+      alert("Could not start payment. Please try again.");
       setIsSubmitting(false);
     }
   };
@@ -184,17 +127,17 @@ export default function SeaPlotDialog({
         {/* Price summary */}
         <div className="mx-5 mb-5 flex items-center justify-between rounded-xl bg-[#2b3138] px-4 py-3 text-sm font-semibold">
           <span className="text-white/70">{totalPlots} plots · 7 days</span>
-          <span>{formatNaira(totalPriceNgn)} <span className="text-xs font-normal text-white/50">or ${totalPriceUsd}</span></span>
+          <span>{formatNaira(totalPriceNgn)}</span>
         </div>
 
         {/* Checkout Button */}
         <div className="bg-[#14181c] p-5">
           <button
             onClick={handleCheckout}
-            disabled={isSubmitting || !isReady}
+            disabled={isSubmitting}
             className="w-full rounded-full bg-[#1db954] py-3.5 text-sm font-bold text-white transition-transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
           >
-            {isSubmitting ? "Processing..." : `Use these ${totalPlots} plots`}
+            {isSubmitting ? "Processing..." : `Pay ${formatNaira(totalPriceNgn)}`}
           </button>
         </div>
 
