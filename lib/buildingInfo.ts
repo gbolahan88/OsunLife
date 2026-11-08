@@ -13,11 +13,11 @@ export type TransportMode = {
 };
 
 export const TRANSPORT_MODES: TransportMode[] = [
-  { id: "trek", name: "Trek", emoji: "🚶", price: 0, speed: 120 },
-  { id: "korope", name: "Korope", emoji: "🚌", price: 500, speed: 300 },
-  { id: "keke", name: "Keke", emoji: "🛺", price: 800, speed: 360 },
-  { id: "okada", name: "Okada", emoji: "🏍️", price: 1500, speed: 520 },
-  { id: "taxi", name: "Taxi", emoji: "🚕", price: 3000, speed: 760 },
+  { id: "trek", name: "Trek", emoji: "🚶", price: 0, speed: 80 },
+  { id: "korope", name: "Korope", emoji: "🚌", price: 500, speed: 200 },
+  { id: "keke", name: "Keke", emoji: "🛺", price: 800, speed: 260 },
+  { id: "okada", name: "Okada", emoji: "🏍️", price: 1500, speed: 420 },
+  { id: "taxi", name: "Taxi", emoji: "🚕", price: 3000, speed: 560 },
 ];
 
 export type BuildingInfo = {

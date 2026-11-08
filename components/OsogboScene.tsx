@@ -9,7 +9,6 @@ import { getGameClock } from "@/lib/time";
 import { useNow } from "@/hooks/useNow";
 import { useGameStore } from "@/store/gameStore";
 import { RideVehicle, type RideMode } from "@/components/game/RideVehicles";
-import RideBar from "@/components/RideBar"
 import {
   CharacterAppearance,
   DEFAULT_CHARACTER_APPEARANCE,
@@ -28,6 +27,7 @@ import { formatNaira } from "@/lib/format";
 import { useTexture } from "@react-three/drei";
 import SeaPlotDialog from "@/components/SeaPlotDialog";
 import SeaPlotSizeSelector from "@/components/SeaPlotSizeSelector";
+import TravelScene from "@/components/game/TravelScene";
 
 type Point = { x: number; y: number };
 type Home = Point & { floors: number; roof: string };
@@ -1671,7 +1671,7 @@ function OceanGrid({ ads, onSelectPlot }: { ads: SeaPlot[], onSelectPlot: (id: s
   const offsetZ = -totalDepth / 2;
 
   return (
-    <group position={[1900, 1.5, -500]}> 
+    <group position={[1620, 1.5, -170]}> 
       
       {/* 1. The Solid Blue Background */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.1, 0]}>
@@ -3059,14 +3059,16 @@ export default function OsogboScene({
         <span className="sr-only" aria-live="polite">{sheetBuilding ? `Selected ${sheetBuilding.name}` : "Osogbo map"}</span>
       </div>
 
-      {showRideBar && tripBuilding && tripMode && (
-        <RideBar
-          emoji={tripMode.emoji}
-          modeName={tripMode.name}
-          destination={tripBuilding.name}
-          progressRef={progressRef}
-          onSkip={handleSkip}
-        />
+      {/* 👇 ADD THE 3D TRAVEL SCENE HERE 👇 */}
+      {showRideBar && tripBuilding && tripMode && travel && (
+        <div className="absolute inset-0 z-40">
+          <TravelScene 
+            destinationName={tripBuilding.name}
+            modeName={tripMode.name}
+            progressRef={progressRef}
+            onSkip={handleSkip}
+          />
+        </div>
       )}
 
       {active && interactive && sheetBuilding && (

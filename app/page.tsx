@@ -11,7 +11,17 @@ export default function Page() {
   if (!configured) return <AuthScreen configured={false} />;
 
   return (
-    <Suspense fallback={<AuthScreen configured />}>
+    <Suspense
+      fallback={
+        <main
+          role="status"
+          aria-live="polite"
+          className="flex min-h-dvh items-center justify-center bg-[#276b7c] px-4 text-sm font-semibold text-white"
+        >
+          Loading your world...
+        </main>
+      }
+    >
       <AuthenticatedGame />
     </Suspense>
   );

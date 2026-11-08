@@ -24,6 +24,13 @@ const MAX_CATCH_UP_MINUTES = 8 * 60;
 // Only a display cache now. The real starting balance is set in the database.
 const STARTING_CASH = 100000;
 
+// 👇 SPEED UP: Multiply stat drain by 15x for a fast-paced game loop
+const STAT_DRAIN_MULTIPLIER = 15;
+// 👇 Faint Duration in milliseconds (30 seconds)
+const FAINT_DURATION_MS = 30_000;
+// 👇 Energy boost given after recovering from a faint
+const FAINT_RECOVERY_ENERGY = 25;
+
 export type CharacterAppearance = {
   skin: string; hair: string; shirt: string; trousers: string;
   hairstyle: "short" | "afro" | "braids";
@@ -46,6 +53,8 @@ function createInitialSave(lastTick = 0) {
     housing: "undecided" as HousingStatus, loan: 0, loanTaken: false,
     furniture: [] as PlacedFurniture[], completedMapTasks: {} as Record<string, number>,
     devOffsetMs: 0, characterAppearance: { ...DEFAULT_CHARACTER_APPEARANCE },
+    isFainted: false,
+    faintedUntil: null as number | null,
     ...WALLET_DEFAULTS,
   };
 }
@@ -57,7 +66,6 @@ const WALLET_NOT_READY: ActionResult = {
   reason: "Syncing your wallet. Try again in a moment.",
 };
 
-// ✅ Furniture → which needs it can fill and by how much per use
 export type FurnitureInteraction = {
   label: string;
   emoji: string;
@@ -66,7 +74,6 @@ export type FurnitureInteraction = {
 };
 
 export const FURNITURE_INTERACTIONS: Record<string, FurnitureInteraction[]> = {
-  // Bathroom
   "bath-wc-toilet": [
     { label: "Use toilet", emoji: "🚽", need: "bladder", amount: 100 },
     { label: "Clean toilet", emoji: "🧽", need: "hygiene", amount: 20 },
@@ -93,7 +100,6 @@ export const FURNITURE_INTERACTIONS: Record<string, FurnitureInteraction[]> = {
   "bath-washing-machine": [
     { label: "Do laundry", emoji: "🌀", need: "hygiene", amount: 40 },
   ],
-  // Sleep
   "foam-mattress": [
     { label: "Sleep", emoji: "😴", need: "energy", amount: 70 },
   ],
@@ -101,7 +107,6 @@ export const FURNITURE_INTERACTIONS: Record<string, FurnitureInteraction[]> = {
     { label: "Sleep", emoji: "😴", need: "energy", amount: 100 },
     { label: "Nap", emoji: "💤", need: "energy", amount: 30 },
   ],
-  // Kitchen
   "gas-cooker": [
     { label: "Cook food", emoji: "🍳", need: "food", amount: 70 },
     { label: "Cook Rice", emoji: "🍳", need: "food", amount: 50 },
@@ -112,7 +117,6 @@ export const FURNITURE_INTERACTIONS: Record<string, FurnitureInteraction[]> = {
   "water-dispenser": [
     { label: "Drink water", emoji: "🥤", need: "hygiene", amount: 10 },
   ],
-  // Living
   "sofa": [
     { label: "Relax on sofa", emoji: "🛋️", need: "energy", amount: 15 },
     { label: "Hang out", emoji: "🎉", need: "social", amount: 25 },
@@ -123,7 +127,6 @@ export const FURNITURE_INTERACTIONS: Record<string, FurnitureInteraction[]> = {
   "dining-set": [
     { label: "Eat at table", emoji: "🍽️", need: "food", amount: 60 },
   ],
-  // Utility
   "utility-washing-machine": [
     { label: "Do laundry", emoji: "🧺", need: "hygiene", amount: 35 },
   ],
@@ -133,7 +136,6 @@ export const FURNITURE_INTERACTIONS: Record<string, FurnitureInteraction[]> = {
   "standing-fan": [
     { label: "Cool down", emoji: "🌀", need: "energy", amount: 10 },
   ],
-  // Decor
   "house-plant": [
     { label: "Water plant", emoji: "🪴", need: "fun", amount: 5 },
   ],
@@ -145,8 +147,11 @@ type GameState = {
   loan: number; loanTaken: boolean; furniture: PlacedFurniture[];
   completedMapTasks: Record<string, number>; devOffsetMs: number;
   characterAppearance: CharacterAppearance;
+  
+  // 👇 Faint Mechanic State
+  isFainted: boolean;
+  faintedUntil: number | null;
 
-  // Wallet mirror (the server is the real balance)
   walletReady: boolean;
   walletVersion: number;
   walletNotice: string | null;
@@ -155,7 +160,6 @@ type GameState = {
 
   updateCharacterAppearance: (appearance: Partial<CharacterAppearance>) => void;
   tick: (now: number) => void;
-  /** Kept so old callers still compile. It no longer gives money: only the server does. */
   addCash: (amount: number) => void;
   spendCash: (amount: number, reason?: SpendReason) => boolean;
   changeNeeds: (delta: Partial<Needs>) => void;
@@ -175,7 +179,6 @@ type GameState = {
 export const useGameStore = create<GameState>()(
   persist(
     (set, get) => {
-      // The server said no: show why and pull the real balance back
       const refused = (reason: string) => {
         set({ walletNotice: reason });
         void get().syncWallet();
@@ -205,17 +208,42 @@ export const useGameStore = create<GameState>()(
             const elapsedMinutes = Math.floor((now - state.lastTick) / MINUTE_MS);
             if (elapsedMinutes < 1) return state;
             const minutesToApply = Math.min(elapsedMinutes, MAX_CATCH_UP_MINUTES);
+            
             const needs: Needs = { ...state.needs };
             for (let i = 0; i < minutesToApply; i++) {
               const clock = getGameClock(state.lastTick + i * MINUTE_MS);
               const isNight = getDayPhase(clock.hour) === "night";
               for (const key of NEED_KEYS) {
-                let drainPerMinute = NEED_META[key].drainPerHour / 60;
+                // 👇 Apply the speed multiplier here
+                let drainPerMinute = (NEED_META[key].drainPerHour * STAT_DRAIN_MULTIPLIER) / 60;
                 if (key === "energy" && isNight) drainPerMinute *= NIGHT_ENERGY_MULTIPLIER;
                 needs[key] = clamp(needs[key] - drainPerMinute);
               }
             }
-            return { needs, lastTick: state.lastTick + elapsedMinutes * MINUTE_MS };
+
+            // 👇 Faint Mechanic Logic
+            let isFainted = state.isFainted;
+            let faintedUntil = state.faintedUntil;
+
+            // Trigger faint if energy hits 0
+            if (needs.energy <= 0 && !state.isFainted) {
+              isFainted = true;
+              faintedUntil = now + FAINT_DURATION_MS;
+            }
+
+            // Recover from faint after time expires
+            if (state.isFainted && now >= (state.faintedUntil ?? 0)) {
+              isFainted = false;
+              faintedUntil = null;
+              needs.energy = FAINT_RECOVERY_ENERGY;
+            }
+
+            return { 
+              needs, 
+              lastTick: state.lastTick + elapsedMinutes * MINUTE_MS,
+              isFainted,
+              faintedUntil,
+            };
           }),
 
         addCash: () => {
@@ -325,7 +353,6 @@ export const useGameStore = create<GameState>()(
             if (res.ok) {
               get().applyServerBalance(res.balance, res.version);
             } else {
-              // The server won't pay for it, so keep the furniture
               set((s) => ({ furniture: [...s.furniture, item] }));
               refused(res.reason);
             }
@@ -379,7 +406,6 @@ export const useGameStore = create<GameState>()(
           return { ok: true };
         },
 
-        // Use furniture to fill a need
         useFurniture: (uid, need, amount) => {
           const state = get();
           const existing = state.furniture.find((entry) => entry.uid === uid);
@@ -407,7 +433,6 @@ export const useGameStore = create<GameState>()(
             completedMapTasks: { ...state.completedMapTasks, [taskId]: completedAt },
           });
 
-          // The server holds the reward and the cooldown
           void claimTask(taskId).then((res) => {
             if (res.ok) get().applyServerBalance(res.balance, res.version);
             else refused(res.reason);
@@ -438,7 +463,6 @@ export const useGameStore = create<GameState>()(
         reset: () =>
           set((state) => ({
             ...createInitialSave(Date.now()),
-            // Your money is not part of a local reset
             cash: state.cash,
             walletReady: state.walletReady,
             walletVersion: state.walletVersion,
@@ -455,7 +479,6 @@ export const useGameStore = create<GameState>()(
           ...currentState,
           ...createInitialSave(Date.now()),
           ...persisted,
-          // Always ask the server for the balance after loading a save
           ...WALLET_DEFAULTS,
           characterAppearance: { ...DEFAULT_CHARACTER_APPEARANCE, ...(persisted?.characterAppearance ?? {}) },
         };
@@ -465,6 +488,8 @@ export const useGameStore = create<GameState>()(
         housing: state.housing, loan: state.loan, loanTaken: state.loanTaken,
         furniture: state.furniture, completedMapTasks: state.completedMapTasks,
         characterAppearance: state.characterAppearance,
+        isFainted: state.isFainted,
+        faintedUntil: state.faintedUntil,
       }),
       skipHydration: true,
     },

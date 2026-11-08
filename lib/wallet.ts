@@ -99,7 +99,16 @@ function readBalance(data: unknown): { balance: number; version: number } | null
 }
 
 export type CrimeStatus = "clear" | "station" | "court";
-export type CrimeAction = "bank_rob" | "bank_hack" | "church_offering" | "bail" | "court_lawyer" | "court_defend";
+export type CrimeAction =
+  | "bank_rob"
+  | "bank_rob_escape"
+  | "bank_rob_complete"
+  | "bank_hack"
+  | "church_offering"
+  | "bail"
+  | "court_wait"
+  | "court_lawyer"
+  | "court_defend";
 export type CrimeOutcome = "state" | "loot" | "arrested" | "offering" | "released";
 export type CrimeResult = Balance & {
   status: CrimeStatus;

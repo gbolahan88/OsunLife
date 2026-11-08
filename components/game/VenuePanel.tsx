@@ -111,7 +111,7 @@ export default function VenuePanel({
           <button
             type="button"
             onClick={() => setOpen(true)}
-            className="pointer-events-auto flex h-11 items-center gap-2 rounded-full border border-[#ffd34d]/70 bg-[#141f2b]/90 px-5 text-[13px] font-extrabold text-[#ffd34d] shadow-lg backdrop-blur"
+            className="pointer-events-auto flex h-11 items-center gap-2 rounded-full border border-white/10 bg-[#1a1a1a] px-5 text-[13px] font-extrabold text-white shadow-lg backdrop-blur"
           >
             <span aria-hidden>🎉</span>
             What to do here
@@ -124,7 +124,7 @@ export default function VenuePanel({
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6.5rem)] flex justify-center px-2 sm:px-4">
-      <div className="pointer-events-auto flex max-h-[calc(100dvh-19rem)] w-full max-w-xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#141f2b]/95 text-white shadow-[0_-12px_40px_rgba(0,0,0,0.45)] backdrop-blur-md">
+      <div className="pointer-events-auto flex max-h-[calc(100dvh-19rem)] w-full max-w-xl flex-col overflow-hidden rounded-t-3xl rounded-b-xl border border-white/10 bg-[#1a1a1a] text-white shadow-2xl backdrop-blur-md">
         {/* Header */}
         <div className="flex shrink-0 items-center gap-3 px-4 pb-2 pt-3">
           <div className="min-w-0 flex-1">

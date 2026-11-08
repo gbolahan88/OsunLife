@@ -3,7 +3,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseConfig, isSupabaseConfigured } from "@/lib/supabase-config";
 
 export async function proxy(request: NextRequest) {
-  if (!isSupabaseConfigured()) return NextResponse.next({ request });
+  if (!isSupabaseConfigured() || request.method !== "GET") {
+    return NextResponse.next({ request });
+  }
 
   const { url, key } = getSupabaseConfig();
   let response = NextResponse.next({ request });
@@ -28,5 +30,6 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"],
+  // Only the game page needs session refresh; model and API requests do not.
+  matcher: ["/"],
 };

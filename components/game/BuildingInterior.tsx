@@ -61,6 +61,11 @@ import {
   venueBuy,
 } from "@/lib/wallet";
 import { formatNaira } from "@/lib/format";
+import BuildingPopupUI, {
+  type BuildingPopupConfig,
+  type BuildingPopupSpot,
+} from "@/components/game/BuildingPopupUI";
+import HeistScene from "@/components/game/HeistScene";
 
 
 type BuyResult = { ok: true } | { ok: false; reason: string };
@@ -1112,12 +1117,74 @@ function BuildingStaff({ buildingId }: { buildingId: string }) {
 }
 
 const ROOM_SEATS: Record<string, Array<{ x: number; z: number; ry?: number; label: string }>> = {
-  bank: [-4, -2, 2, 4].map((x) => ({ x, z: 1, label: "Waiting chair" })),
+  bank: [
+    { x: -8, z: 0, label: "Waiting chair", ry: Math.PI /2}
+  ],
   "state-cid": [
     { x: -7, z: -5.4, label: "Cell bench" }, 
-    { x: 8.8, z: 4, label: "Waiting chair", ry: -Math.PI / 2 },],
+    { x: 8.8, z: 4, label: "Waiting bench", ry: -Math.PI / 2 },
+  ],
   "federal-high-court": [-6, -2, 2, 6].map((x) => ({ x, z: 3, label: "Court bench" })),
   church: [-6, -2, 2, 6].map((x) => ({ x, z: 0, label: "Church pew" })),
+};
+
+const BUILDING_POPUP_CONFIGS: Record<string, BuildingPopupConfig> = {
+  bank: {
+    emoji: "🏦",
+    title: "Osun Community Bank",
+    subtitle: "Bank lobby · Customer service",
+    staff: "Amina · Teller",
+    actions: [
+      { id: "bank_rob", emoji: "💰", label: "Rob the Bank", requiresStatus: "clear" },
+      { id: "bank_hack", emoji: "💻", label: "Hack Vault", requiresStatus: "clear" },
+    ],
+    spots: [
+      { label: "Teller desk", emoji: "🏧", x: 0, z: -3 },
+      { label: "Waiting chair", emoji: "🪑", x: -4, z: 1 },
+    ],
+  },
+  church: {
+    emoji: "⛪",
+    title: "Osogbo Community Church",
+    subtitle: "Church hall · Welcome in",
+    staff: "Pastor Olumide",
+    actions: [
+      { id: "church_offering", emoji: "🙏", label: "Take Offering", requiresStatus: "clear" },
+    ],
+    spots: [
+      { label: "Church pew", emoji: "🪑", x: -6, z: 0 },
+      { label: "Altar", emoji: "🙏", x: 0, z: -5 },
+    ],
+  },
+  "federal-high-court": {
+    emoji: "⚖️",
+    title: "Federal High Court",
+    subtitle: "Courtroom · Proceedings in session",
+    staff: "Justice Adeyemi",
+    actions: [
+      { id: "court_lawyer", emoji: "🧑‍⚖️", label: "Hire Lawyer · ₦120,000", requiresStatus: "court" },
+      { id: "court_defend", emoji: "📜", label: "Defend Yourself", requiresStatus: "court" },
+    ],
+    spots: [
+      { label: "Court bench", emoji: "🪑", x: -6, z: 3 },
+      { label: "Court desk", emoji: "⚖️", x: 0, z: -4 },
+    ],
+  },
+  "state-cid": {
+    emoji: "🚓",
+    title: "State CID Police Station",
+    subtitle: "Osogbo · Police precinct",
+    staff: "Officer Akande",
+    actions: [
+      { id: "bail", emoji: "🔓", label: "Post Bail · ₦150,000", requiresStatus: "station" },
+      { id: "court_wait", emoji: "⚖️", label: "Wait for Court", requiresStatus: "station" },
+    ],
+    spots: [
+      { label: "Front desk", emoji: "🛎️", x: 4, z: -3 },
+      { label: "The cell", emoji: "🔒", x: -7, z: -5.4 },
+      { label: "Waiting bench", emoji: "🪑", x: 8.8, z: 4 },
+    ],
+  },
 };
 
 /* ───────────── The room ───────────── */
@@ -1277,8 +1344,8 @@ function InteriorScene({
         {/* Bank Bench */}
         <LoungeModel 
           url="/models/bench.glb" 
-          position={[0, 0, 2]} 
-          rotation={0} // 0 means facing the camera (towards the counters)
+          position={[-8.5, 0, 2]} 
+          rotation={Math.PI / 2} // 0 means facing the camera (towards the counters)
           maxSize={[6, 2, 2]} 
         />
       </Suspense>
@@ -1387,6 +1454,7 @@ export default function BuildingInterior({
   const [crimeBusy, setCrimeBusy] = useState(false);
   const [crimeLoadFailed, setCrimeLoadFailed] = useState(false);
   const [crimePanelOpen, setCrimePanelOpen] = useState(true);
+  const [heistSceneOpen, setHeistSceneOpen] = useState(false);
   const [crimeRetry, setCrimeRetry] = useState(0);
   const [dancing, setDancing] = useState(false);
   const [sitting, setSitting] = useState(false);
@@ -1511,14 +1579,21 @@ export default function BuildingInterior({
     [applyServerBalance, buildingId, pushFx, username],
   );
 
-  const handleCrimeAction = useCallback(async (action: CrimeAction) => {
+  const handleCrimeAction = useCallback(async (action: CrimeAction): Promise<boolean> => {
+    if (action === "bank_rob") {
+      setCrimeNotice(null);
+      setCrimePanelOpen(false);
+      setHeistSceneOpen(true);
+      return true;
+    }
+
     setCrimeBusy(true);
     setCrimeNotice(null);
     try {
       const result = await performCrimeAction(action);
       if (!result.ok) {
         setCrimeNotice(result.reason);
-        return;
+        return false;
       }
 
       applyServerBalance(result.balance, result.version);
@@ -1530,20 +1605,42 @@ export default function BuildingInterior({
       } else if (result.outcome === "arrested") {
         setCrimeNotice(
           result.status === "station"
-            ? "You were arrested and taken to State CID."
+            ? `You were arrested and taken to State CID.${result.loot > 0 ? ` You stole ${formatNaira(result.loot)}.` : ""}`
             : "You were arrested and taken to Federal High Court.",
         );
         onCrimeTravel(result.status === "station" ? "state-cid" : "federal-high-court");
       } else if (result.outcome === "released") {
         setCrimeNotice("You are free to leave.");
       }
+      if (action === "court_wait" && result.status === "court") {
+        setCrimeNotice("You are being taken to Federal High Court.");
+        onCrimeTravel("federal-high-court");
+      }
+      return true;
     } catch (error: unknown) {
       console.error("[BuildingInterior] Crime action failed:", error);
       setCrimeNotice("That action failed. Please try again.");
+      return false;
     } finally {
       setCrimeBusy(false);
     }
   }, [applyServerBalance, onCrimeTravel]);
+
+  const handleHeistResolve = useCallback(
+    (escaped: boolean) => handleCrimeAction(escaped ? "bank_rob_escape" : "bank_rob_complete"),
+    [handleCrimeAction],
+  );
+  const finishHeist = useCallback(async (escaped: boolean) => {
+    const resolved = await handleHeistResolve(escaped);
+    if (resolved) setHeistSceneOpen(false);
+    return resolved;
+  }, [handleHeistResolve]);
+
+  const retryCrimeState = useCallback(() => {
+    setCrimeLoadFailed(false);
+    setCrimeLoading(true);
+    setCrimeRetry((retry) => retry + 1);
+  }, []);
 
   const handleReact = useCallback(
     (reactionId: string) => {
@@ -1555,7 +1652,13 @@ export default function BuildingInterior({
     [sendEvent, showBubble, userId],
   );
 
-  const handleSpot = useCallback((spot: VenueSpot) => {
+  const handleSpot = useCallback((spot: Pick<VenueSpot, "label" | "x" | "z"> | BuildingPopupSpot) => {
+    const seat = ROOM_SEATS[buildingId]?.find((roomSeat) => roomSeat.label === spot.label);
+    if (seat) {
+      handleSeatAt([seat.x, seat.z + 1], "sit", seat.ry);
+      return;
+    }
+
     const allPlayers = [...here, { userId }];
     
     const isOccupied = (sx: number, sz: number) => {
@@ -1593,7 +1696,7 @@ export default function BuildingInterior({
       setDancing(false);
       setSitting(false);
     }
-  }, [here, userId, remote, localRef]);
+  }, [buildingId, handleSeatAt, here, userId, remote, localRef]);
 
   function chatWith(player: RemotePlayer) {
     openThread({ userId: player.userId, username: player.username });
@@ -1601,8 +1704,8 @@ export default function BuildingInterior({
   }
 
   return <div className="absolute inset-0 z-20 overflow-hidden bg-[#c8d7d2]">
-    <Canvas shadows dpr={[1, 1.5]} camera={{ position: [0, 10, 19], fov: 48, near: .1, far: 100 }} gl={{ antialias: true }}>
-      <OrbitControls makeDefault enablePan={false} enableRotate enableZoom minDistance={12} maxDistance={27} maxPolarAngle={Math.PI / 2.05} target={[0, 1.5, 0]} />
+    <Canvas shadows dpr={[1, 1.5]} camera={{ position: [0, 10, 19], fov: 40, near: .1, far: 100 }} gl={{ antialias: true }}>
+      <OrbitControls makeDefault enablePan={false} enableRotate enableZoom minDistance={12} maxDistance={40} maxPolarAngle={Math.PI / 2.05} target={[0, 1.5, 0]} />
       <InteriorScene
         config={config}
         buildingId={buildingId}
@@ -1630,6 +1733,11 @@ export default function BuildingInterior({
     {spotNotice && (
       <div className="pointer-events-none absolute bottom-36 left-1/2 z-50 -translate-x-1/2 rounded-full bg-black/80 px-4 py-2 text-sm font-bold text-white shadow-lg backdrop-blur">
         {spotNotice}
+      </div>
+    )}
+    {crimeBuilding && crimeNotice && !crimePanelOpen && !heistSceneOpen && (
+      <div role="status" className="pointer-events-none absolute left-1/2 top-[calc(env(safe-area-inset-top)+6rem)] z-50 -translate-x-1/2 rounded-full bg-black/80 px-4 py-2 text-center text-sm font-bold text-white shadow-lg backdrop-blur">
+        {crimeNotice}
       </div>
     )}
 
@@ -1696,210 +1804,24 @@ export default function BuildingInterior({
         </div>
       )}
 
-      {crimeBuilding && crimePanelOpen && (
-        <div className="pointer-events-auto absolute inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+5rem)] z-40 flex max-h-[80vh] flex-col overflow-hidden rounded-[2rem] bg-[#1a2a30]/95 text-white shadow-[0_10px_40px_rgba(0,0,0,0.8)] backdrop-blur-2xl border border-white/10">
-          
-          {/* Header */}
-          <div className="flex items-start justify-between px-5 pt-5 pb-3">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-2xl">
-                {buildingId === "bank" && "🏦"}
-                {buildingId === "state-cid" && "🚓"}
-                {buildingId === "federal-high-court" && "⚖️"}
-                {buildingId === "church" && "⛪"}
-              </div>
-              <div>
-                <h2 className="text-xl font-extrabold tracking-tight">{buildingName}</h2>
-                <p className="text-xs text-white/70">
-                  {buildingId === "bank" && "Safe & Secure Banking"}
-                  {buildingId === "state-cid" && "State CID Holding Station"}
-                  {buildingId === "federal-high-court" && "Federal High Court"}
-                  {buildingId === "church" && "Offering & Donations"}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setCrimePanelOpen(false)}
-                aria-label="Collapse venue actions"
-                className="rounded-full bg-white/10 p-2 text-white/80 hover:bg-white/20"
-              >
-                <ChevronDown size={18} />
-              </button>
-              <button onClick={onExit} aria-label="Return to map" className="rounded-full bg-white/10 p-2 text-white/80 hover:bg-white/20">
-                <ArrowLeft size={16} />
-              </button>
-            </div>
-          </div>
-
-          {/* Status Message */}
-          <div className="px-5 pb-4">
-            <div className="flex items-center gap-2 rounded-full bg-white/5 border border-white/10 px-4 py-3">
-              <span className="text-xs font-medium text-white/80">
-                {crimeNotice ??
-                  (crimeLoading
-                    ? "Checking your record…"
-                    : crimeState?.status === "station"
-                      ? `You are being held. Stolen: ${formatNaira(crimeState.stolenAmount)}.`
-                      : crimeState?.status === "court"
-                        ? `Your case is in court. Stolen: ${formatNaira(crimeState.stolenAmount)}.`
-                        : "Choose an action below.")}
-              </span>
-            </div>
-            {crimeLoadFailed && (
-              <button
-                type="button"
-                disabled={crimeLoading}
-                onClick={() => {
-                  setCrimeLoading(true);
-                  setCrimeLoadFailed(false);
-                  setCrimeNotice(null);
-                  setCrimeRetry((attempt) => attempt + 1);
-                }}
-                className="mt-2 rounded-full bg-white/10 px-4 py-2 text-xs font-bold hover:bg-white/15 disabled:opacity-50"
-              >
-                {crimeLoading ? "Connecting…" : "Retry"}
-              </button>
-            )}
-          </div>
-
-          {/* Action Cards */}
-          <div className="flex flex-col gap-2 overflow-y-auto px-5 pb-4 scrollbar-hide">
-            {buildingId === "bank" && crimeState?.status === "clear" && (
-              <>
-                <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#bd783c] text-xl">💰</div>
-                    <div>
-                      <p className="text-sm font-bold">Rob the Bank</p>
-                      <p className="text-[10px] text-white/50">40% chance of arrest</p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={crimeLoading || crimeBusy}
-                    onClick={() => void handleCrimeAction("bank_rob")}
-                    className="rounded-full bg-[#bd783c] px-4 py-2 text-xs font-extrabold shadow-lg disabled:opacity-50"
-                  >
-                    Attempt
-                  </button>
-                </div>
-
-                <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#6d5aa5] text-xl">💻</div>
-                    <div>
-                      <p className="text-sm font-bold">Hack the Bank</p>
-                      <p className="text-[10px] text-white/50">Immediate arrest and court case</p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={crimeLoading || crimeBusy}
-                    onClick={() => void handleCrimeAction("bank_hack")}
-                    className="rounded-full bg-[#6d5aa5] px-4 py-2 text-xs font-extrabold shadow-lg disabled:opacity-50"
-                  >
-                    Attempt
-                  </button>
-                </div>
-              </>
-            )}
-
-            {buildingId === "church" && (
-              <button
-                type="button"
-                disabled={crimeLoading || crimeBusy || crimeState?.status !== "clear" || crimeState?.offeringClaimed}
-                onClick={() => void handleCrimeAction("church_offering")}
-                className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3 hover:bg-white/10 disabled:opacity-50"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#9b5442] text-xl">🕊️</div>
-                  <div className="text-left">
-                    <p className="text-sm font-bold">{crimeState?.offeringClaimed ? "Offering taken" : "Take Offering"}</p>
-                    <p className="text-[10px] text-white/50">+₦50,000 · once only</p>
-                  </div>
-                </div>
-                <span className="text-xs font-bold text-white/70">Take</span>
-              </button>
-            )}
-
-            {buildingId === "state-cid" && crimeState?.status === "station" && (
-              <>
-                <p className="rounded-xl bg-white/5 px-3 py-2 text-xs text-white/70">
-                  Case amount: {formatNaira(crimeState.stolenAmount)} · Bail and damages: ₦150,000
-                </p>
-                <button
-                  type="button"
-                  disabled={crimeLoading || crimeBusy || crimeState.stolenAmount >= 100000 || cash < 150000}
-                  onClick={() => void handleCrimeAction("bail")}
-                  className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3 hover:bg-white/10 disabled:opacity-50"
-                >
-                  <span className="text-left text-sm font-bold">
-                    {crimeState.stolenAmount >= 100000 ? "Bail unavailable for this amount" : "Pay bail and damages"}
-                    {crimeState.stolenAmount < 100000 && cash < 150000 && <span className="block text-[10px] font-medium text-white/50">Not enough cash</span>}
-                  </span>
-                  <span className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-bold">₦150,000</span>
-                </button>
-              </>
-            )}
-
-            {buildingId === "federal-high-court" && crimeState?.status === "court" && (
-              <>
-                <p className="rounded-xl bg-white/5 px-3 py-2 text-xs text-white/70">
-                  Case amount: {formatNaira(crimeState.stolenAmount)}
-                </p>
-                <button
-                  type="button"
-                  disabled={crimeLoading || crimeBusy || cash < 120000}
-                  onClick={() => void handleCrimeAction("court_lawyer")}
-                  className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3 hover:bg-white/10 disabled:opacity-50"
-                >
-                  <span className="text-left">
-                    <span className="block text-sm font-bold">Hire a Lawyer</span>
-                    {cash < 120000 && <span className="text-[10px] text-white/50">Not enough cash</span>}
-                  </span>
-                  <span className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-bold">₦120,000</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={crimeLoading || crimeBusy || cash < crimeState.stolenAmount}
-                  onClick={() => void handleCrimeAction("court_defend")}
-                  className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3 hover:bg-white/10 disabled:opacity-50"
-                >
-                  <span className="text-left">
-                    <span className="block text-sm font-bold">Defend Yourself</span>
-                    <span className="text-[10px] text-white/50">Forfeits the stolen amount</span>
-                  </span>
-                  <span className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-bold">
-                    {formatNaira(crimeState.stolenAmount)}
-                  </span>
-                </button>
-              </>
-            )}
-          </div>
-
-          {crimeState && (
-            <div className="px-5 pb-4">
-              <button
-                type="button"
-                disabled={crimeBusy || crimeLoading}
-                onClick={() => {
-                  const seat = buildingId === "state-cid" && crimeState.status === "station"
-                    ? ROOM_SEATS["state-cid"][0]
-                    : ROOM_SEATS[buildingId]?.find((entry) => entry.label !== "Cell bench");
-                  if (seat) handleSeatAt([seat.x, seat.z], "sit", seat.ry);
-                }}
-                className="w-full rounded-full border border-white/10 bg-white/5 px-4 py-2.5 text-xs font-bold text-white/85 hover:bg-white/10 disabled:opacity-40"
-              >
-                🪑 {buildingId === "state-cid" && crimeState.status === "station"
-                  ? "Sit on the cell bench"
-                  : `Sit in the ${buildingId === "bank" ? "waiting area" : buildingId === "federal-high-court" ? "gallery" : buildingId === "church" ? "pew" : "waiting area"}`}
-              </button>
-            </div>
-          )}
-        </div>
+      {crimeBuilding && crimePanelOpen && BUILDING_POPUP_CONFIGS[buildingId] && (
+        <BuildingPopupUI
+          config={BUILDING_POPUP_CONFIGS[buildingId]}
+          here={here}
+          crimeState={crimeState}
+          crimeNotice={crimeNotice}
+          crimeLoading={crimeLoading}
+          crimeBusy={crimeBusy}
+          crimeLoadFailed={crimeLoadFailed}
+          onClose={() => setCrimePanelOpen(false)}
+          onWalkToSpot={handleSpot}
+          onReact={handleReact}
+          onAction={(action) => void handleCrimeAction(action)}
+          onRetry={retryCrimeState}
+        />
+      )}
+      {heistSceneOpen && (
+        <HeistScene onResolve={finishHeist} />
       )}
     </div>
   </div>;
