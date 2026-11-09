@@ -66,6 +66,7 @@ import BuildingPopupUI, {
   type BuildingPopupSpot,
 } from "@/components/game/BuildingPopupUI";
 import HeistScene from "@/components/game/HeistScene";
+import ReportUserDialog from "./ReportUserDialog";
 
 
 type BuyResult = { ok: true } | { ok: false; reason: string };
@@ -143,9 +144,6 @@ const INTERIORS: Record<string, InteriorConfig> = {
   "state-cid": { subtitle: "State CID holding station", floor: "#b9c1c2", wall: "#e5e8e4", accent: "#344b67", fixtures: [
   ]},
   "federal-high-court": { subtitle: "Federal High Court", floor: "#b49a73", wall: "#eee4d0", accent: "#82704f", fixtures: [
-    { kind: "throne", x: 0, z: -5, color: "#82704f" },
-    ...[-6, -2, 2, 6].map((x) => ({ kind: "stadium-seat" as const, x, z: 3 })),
-    { kind: "office-desk", x: 0, z: 0 },
   ]},
   church: { subtitle: "Osogbo Community Church", floor: "#b9aa8c", wall: "#f0e9dc", accent: "#9b5442", fixtures: [
     { kind: "altar", x: 0, z: -5, color: "#9b5442" },
@@ -1082,7 +1080,7 @@ const BUILDING_STAFF: Record<string, Array<{
       { name: "Desk Sergeant", position: [-9.5, 0.45, 4, Math.PI / 2], shirt: "#243c67", action: "sit" },
     ],
     "federal-high-court": [
-      { name: "Justice Adeyemi", position: [0, 0, -6.7, 0], shirt: "#342f35", action: "idle" },
+      { name: "Justice Adeyemi", position: [0, 0.8, -6.7, 0], shirt: "#342f35", action: "idle" },
       { name: "Counsel A", position: [-8, 0, -5.8, 0], shirt: "#183e63", action: "work" },
       { name: "Counsel B", position: [8, 0, -5.8, 0], shirt: "#5b3e31", action: "work" },
     ],
@@ -1270,6 +1268,7 @@ function InteriorScene({
 
     {config.fixtures.map((fixture, index) => <FixtureModel key={`${fixture.kind}-${index}`} fixture={fixture} />)}
     {buildingId === "state-cid" && <DetentionCell />}
+
     {buildingId === "state-cid" && (
       <Suspense fallback={null}>
         {/* Custom Lower Counter */}
@@ -1303,6 +1302,7 @@ function InteriorScene({
         />
       </Suspense>
     )}
+
     {buildingId === "bank" && (
       <Suspense fallback={null}>
         {/* Left Counter */}
@@ -1350,6 +1350,55 @@ function InteriorScene({
         />
       </Suspense>
     )}
+
+    {buildingId === "federal-high-court" && (
+      <Suspense fallback={null}>
+        {/* Judge's desk at the back */}
+        <LoungeModel
+          url="/models/courtroom_judge_desk.glb"
+          position={[0, 0, -6]}
+          rotation={0}
+          maxSize={[8, 3, 4]}
+        />
+
+        {/* Counsel desk on the left */}
+        <LoungeModel
+          url="/models/lawyerdesk.glb"
+          position={[-7.8, 0, -4.5]}
+          rotation={Math.PI}
+          maxSize={[2, 1.6, 3]}
+        />
+
+        {/* Counsel desk on the right */}
+        <LoungeModel
+          url="/models/lawyerdesk.glb"
+          position={[7.8, 0, -4.5]}
+          rotation={Math.PI}
+          maxSize={[2, 1.6, 3]}
+        />
+
+        {/* 3 wooden park benches for the gallery */}
+        <LoungeModel
+          url="/models/wooden_park_bench.glb"
+          position={[-9, 0, 4]}
+          rotation={Math.PI / 2}
+          maxSize={[4, 2, 2]}
+        />
+        <LoungeModel
+          url="/models/wooden_park_bench.glb"
+          position={[-7, 0, 4]}
+          rotation={Math.PI / 2}
+          maxSize={[4, 2, 2]}
+        />
+        <LoungeModel
+          url="/models/wooden_park_bench.glb"
+          position={[-5, 0, 4]}
+          rotation={Math.PI / 2}
+          maxSize={[4, 2, 2]}
+        />
+      </Suspense>
+    )}
+
     {buildingId === "church" && <OfferingBox />}
     <BuildingStaff buildingId={buildingId} />
     {(ROOM_SEATS[buildingId] ?? []).map((seat) => (
@@ -1460,6 +1509,7 @@ export default function BuildingInterior({
   const [sitting, setSitting] = useState(false);
   const [bubbles, setBubbles] = useState<Record<string, string>>({});
   const [spotNotice, setSpotNotice] = useState<string | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
   const bubbleTimers = useRef(new Map<string, number>());
   const localRef = useRef<RoomPose>({ x: SPAWN_X, z: SPAWN_Z, ry: 0, action: "idle" });
   const targetRef = useRef<{ x: number; z: number; ry?: number } | null>(null);
@@ -1818,8 +1868,14 @@ export default function BuildingInterior({
           onReact={handleReact}
           onAction={(action) => void handleCrimeAction(action)}
           onRetry={retryCrimeState}
+          onReport={buildingId === "state-cid" ? () => setReportOpen(true) : undefined}
         />
       )}
+
+      {reportOpen && 
+        <ReportUserDialog onClose={() => setReportOpen(false)} />
+      }
+
       {heistSceneOpen && (
         <HeistScene onResolve={finishHeist} />
       )}
